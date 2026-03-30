@@ -108,12 +108,20 @@ with PoseLandmarker.create_from_options(options) as landmarker:
             angle_rs = calculate_angle(xy(RIGHT_ELBOW), xy(RIGHT_SHOULDER), xy(RIGHT_HIP))
 
             # ── 화면에 각도 표시 ──────────────────────────────
-            draw_angle(frame, landmarks[LEFT_ELBOW],    angle_le, "L팔꿈치")
-            draw_angle(frame, landmarks[RIGHT_ELBOW],   angle_re, "R팔꿈치")
-            draw_angle(frame, landmarks[LEFT_KNEE],     angle_lk, "L무릎")
-            draw_angle(frame, landmarks[RIGHT_KNEE],    angle_rk, "R무릎")
-            draw_angle(frame, landmarks[LEFT_SHOULDER], angle_ls, "L어깨")
-            draw_angle(frame, landmarks[RIGHT_SHOULDER],angle_rs, "R어깨")
+            # 한글은 ???로 나와서 영어로 수정
+            # draw_angle(frame, landmarks[LEFT_ELBOW],    angle_le, "L팔꿈치")
+            # draw_angle(frame, landmarks[RIGHT_ELBOW],   angle_re, "R팔꿈치")
+            # draw_angle(frame, landmarks[LEFT_KNEE],     angle_lk, "L무릎")
+            # draw_angle(frame, landmarks[RIGHT_KNEE],    angle_rk, "R무릎")
+            # draw_angle(frame, landmarks[LEFT_SHOULDER], angle_ls, "L어깨")
+            # draw_angle(frame, landmarks[RIGHT_SHOULDER],angle_rs, "R어깨")
+
+            draw_angle(frame, landmarks[LEFT_ELBOW],    angle_le, "L_Elbow")
+            draw_angle(frame, landmarks[RIGHT_ELBOW],   angle_re, "R_Elbow")
+            draw_angle(frame, landmarks[LEFT_KNEE],     angle_lk, "L_Knee")
+            draw_angle(frame, landmarks[RIGHT_KNEE],    angle_rk, "R_Knee")
+            draw_angle(frame, landmarks[LEFT_SHOULDER], angle_ls, "L_Shoulder")
+            draw_angle(frame, landmarks[RIGHT_SHOULDER],angle_rs, "R_Shoulder")
 
             # ── 터미널 출력 ───────────────────────────────────
             print(
