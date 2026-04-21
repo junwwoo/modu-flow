@@ -19,7 +19,8 @@ moduflow_project/
         ├── test_pose_2.py          # 주요 관절 좌표 출력
         ├── test_pose_3.py          # 관절 각도 계산 + 화면 표시
         ├── test_pose_4.py          # 스쿼트 자세 판별 + 횟수 카운팅
-        └── test_pose_5.py          # 자세 교정 피드백 메시지
+        ├── test_pose_5.py          # 자세 교정 피드백 메시지
+        └── test_pose_6.py          # 데이터 구조 설계 (좌표/각도 저장)
 ```
 
 ## Tech Stack
