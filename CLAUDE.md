@@ -20,7 +20,8 @@ moduflow_project/
         ├── test_pose_3.py          # 관절 각도 계산 + 화면 표시
         ├── test_pose_4.py          # 스쿼트 자세 판별 + 횟수 카운팅
         ├── test_pose_5.py          # 자세 교정 피드백 메시지
-        └── test_pose_6.py          # 데이터 구조 설계 (좌표/각도 저장)
+        ├── test_pose_6.py          # 데이터 구조 설계 (좌표/각도 저장)
+        └── test_pose_7.py          # 백엔드 API 연동 (Spring)
 ```
 
 ## Tech Stack
@@ -29,6 +30,7 @@ moduflow_project/
 - OpenCV (`cv2`)
 - MediaPipe (PoseLandmarker, Tasks API)
 - NumPy
+- requests (Spring 백엔드 HTTP 통신, 7주차)
 
 ## Development
 
