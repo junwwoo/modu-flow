@@ -1,0 +1,12 @@
+file_path,exercise,label,expected_posture,expected_issue_key,expected_stage,view,member,notes
+_generic/blank_black.jpg,,not_detected,bad,,,,,사람 미검출 케이스 (단색)
+_generic/noise.jpg,,not_detected,bad,,,,,사람 미검출 케이스 (랜덤 노이즈)
+_generic/stick_figure.jpg,,not_detected,bad,,,,,사람 미검출 케이스 (스틱 피규어)
+squat/good_up/m1_front_01.jpg,squat,good_up,good,,UP,front,m1,기립 자세 (UP stage standby)
+squat/good_up/m1_front_02.jpg,squat,good_up,good,,UP,front,m1,기립 자세 (UP stage standby)
+squat/left_knee_forward/m1_side_01.jpg,squat,left_knee_forward,bad,squat.left_knee_forward,DOWN,side,m1,왼쪽 무릎이 발끝보다 전방
+pushup/good_up/m1_side_01.jpg,pushup,good_up,good,,UP,side,m1,팔꿈치 신전 상태
+pushup/good_down/m1_side_01.jpg,pushup,good_down,good,,DOWN,side,m1,정상 DOWN 자세
+pushup/hip_sag/m1_side_01.jpg,pushup,hip_sag,bad,pushup.hip_sag,,side,m1,엉덩이 처짐
+pushup/hip_pike/m1_side_01.jpg,pushup,hip_pike,bad,pushup.hip_pike,,side,m1,엉덩이 솟음
+pushup/camera_angle/m1_front_01.jpg,pushup,camera_angle,bad,pushup.camera_angle,,front,m1,정면 촬영 부적합 케이스

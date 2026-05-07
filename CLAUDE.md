@@ -57,21 +57,24 @@ moduflow_project/
     │   ├── api_changes_w10.md      #   변경 요약 + REST/WS 스키마 + 팀별 액션 아이템
     │   ├── openapi_w10.json        #   FastAPI 자동 생성 OpenAPI 스펙
     │   └── samples_w10.json        #   REST/WS 정상·에러 응답 7종 실측 샘플
-    ├── test_images/                # 9~10주차: 테스트 데이터셋
+    ├── test_images/                # 9~11주차: 테스트 데이터셋
     │   ├── _generate.py            #   더미 이미지 생성기 (blank/noise/stick)
     │   ├── _capture.py             #   웹캠 1프레임 캡처 헬퍼
-    │   ├── blank_black.jpg
-    │   ├── noise.jpg
-    │   ├── stick_figure.jpg
-    │   ├── person_capture_*.jpg    #   9주차: 실제 사람 사진
-    │   └── pushup_*.jpg            #   10주차: Push-up 1차 튜닝 표본 5장
+    │   ├── README.md               #   11주차: 폴더 구조·파일명 컨벤션·촬영 가이드
+    │   ├── manifest.csv            #   11주차: 그라운드 트루스 (file_path/exercise/label/expected_*)
+    │   ├── _generic/               #   사람 미검출 케이스 (blank/noise/stick)
+    │   ├── squat/                  #   라벨별 하위 폴더 (good_up/good_down/<issue_key>/...)
+    │   ├── pushup/                 #   라벨별 하위 폴더 (good_up/good_down/hip_sag/hip_pike/camera_angle)
+    │   └── lunge/                  #   라벨별 하위 폴더 (good_up/good_down/front_knee_forward/trunk_lean/unknown_front_leg)
     └── src/
-        ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry
+        ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer
         ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket)
         ├── feedback_messages.py    # 10주차: 한국어 피드백 메시지 dict
+        ├── session_state.py        # 11주차: ExerciseSessionManager (운동별 카운터/이슈 통계 보존)
         ├── test_analyze.py         # 9주차: analyze_pose 모듈 단독 테스트
         ├── test_client.py          # 9주차: REST + WebSocket 통합 테스트
         ├── live_client.py          # 9주차: 실시간 웹캠 → WebSocket 클라이언트
+        ├── test_dataset.py         # 11주차: manifest 기반 일괄 검증 + 라벨별 정확도
         └── test/                   # 진행 과정 아카이브 (1~7주차 단계별 구현물)
             ├── test_pose.py        #   기본 랜드마크 표시
             ├── test_pose_2.py      #   주요 관절 좌표 출력
@@ -161,6 +164,7 @@ moduflow_project/
 - 웹캠 프레임 → JPEG 압축(quality 70) → base64 → WebSocket 송신
 - 응답을 받아 화면에 `posture` / `feedback` / `angles` / `FPS` / `latency(ms)` 오버레이
 - 검증 결과: **단일 WebSocket 연결로 604 프레임 처리 / 에러 0건**
+- **11주차 확장**: `1`/`2`/`3` 키로 squat/pushup/lunge 즉시 전환 (재연결 없음 — 서버 stateless 설계 활용). 클라이언트가 `ExerciseSessionManager`를 직접 보유하여 운동별 rep 카운트·이슈 통계를 우측 패널에 누적 표시. 운동 전환 시 각 운동의 누적 상태는 보존되어 squat→pushup→squat 복귀 시 카운트 이어짐. 종료 시 콘솔에 운동별 최종 카운트와 top 이슈 출력.
 
 ### 9주차에 발견·수정한 이슈
 - **모델 경로의 호출자 CWD 의존 문제**: `test_pose_8.py`의 `model_path`를 `__file__` 기준 절대경로로 변경하여 어느 디렉토리에서 import해도 안전하게 동작하도록 수정
@@ -189,7 +193,7 @@ done
 
 ### 아키텍처: ExerciseAnalyzer + EXERCISE_REGISTRY
 
-- `ExerciseAnalyzer`(typing.Protocol) — 운동별 분석기 인터페이스. **stateless** (rep 카운팅·이슈 누적은 외부 호출자 담당, 11주차 `ExerciseSessionManager`로 분리 예정)
+- `ExerciseAnalyzer`(typing.Protocol) — 운동별 분석기 인터페이스. **stateless** (rep 카운팅·이슈 누적은 외부 호출자 담당, 추후 `ExerciseSessionManager`로 분리 예정)
 - `EXERCISE_REGISTRY: dict[str, ExerciseAnalyzer]` — `"squat"` → `SquatAnalyzer`, `"pushup"` → `PushupAnalyzer`
 - `analyze_pose(image, exercise: str = "squat")` — 시그니처 확장. 미지원 운동명은 `UnsupportedExerciseError` (ValueError 서브클래스)
 
@@ -244,6 +248,185 @@ done
 - `api_changes_w10.md` — 변경 요약 + REST/WS 스키마 + 운동별 응답 예시 + 메시지 키 카탈로그 + 팀별 액션 아이템(Spring/Android/PWA)
 - `openapi_w10.json` — FastAPI 자동 생성 OpenAPI 3.x 스펙 (Swagger UI 임포트 가능)
 - `samples_w10.json` — REST/WS 정상·에러 응답 7종 실측 샘플 (요청·응답 짝)
+
+## 11주차: 데이터셋 라벨링 체계 + 자동 검증 파이프라인
+
+10주차까지 평탄한 파일 나열이던 `test_images/`를 **운동별/라벨별 폴더 구조 + manifest 기반 그라운드 트루스**로 재편하였다. 새 운동 추가 시 폴더와 manifest 행만 추가하면 검증 스크립트가 자동 인식하는 구조.
+
+### 폴더 구조 원칙
+
+**폴더 = 라벨, 파일명 = 메타데이터, `manifest.csv` = 그라운드 트루스**
+
+```
+test_images/
+├── _generic/                # 사람 미검출 케이스 (운동 무관)
+├── squat/                   # 폴더명 = EXERCISE_REGISTRY 키
+│   ├── good_up/             # UP stage 정상 (기립)
+│   ├── good_down/           # DOWN stage 정상
+│   ├── left_knee_forward/   # 하위 폴더명 = 이슈 키 suffix (squat.left_knee_forward)
+│   ├── right_knee_forward/
+│   ├── trunk_lean/
+│   └── knee_asymmetry/
+├── pushup/
+│   ├── good_up/ good_down/
+│   ├── hip_sag/ hip_pike/
+│   └── camera_angle/
+└── manifest.csv
+```
+
+- 파일명 컨벤션: `<member><id>_<view>_<seq>.jpg` (예: `m1_side_01.jpg`, `m3_front_02.jpg`)
+- 4인 팀이 분담 촬영 → `member` 토큰으로 체형 편향 분석 가능
+- `view` ∈ {`side`, `front`, `angle`}: `pushup.camera_angle` 등 정면 의도 케이스 식별용
+
+### manifest.csv 스키마
+
+| 컬럼 | 설명 |
+|---|---|
+| `file_path` | `test_images/` 기준 상대 경로 |
+| `exercise` | `EXERCISE_REGISTRY` 키, generic은 빈 값 |
+| `label` | 폴더명과 동일 (쿼리 편의용 중복) |
+| `expected_posture` | `good` / `bad` |
+| `expected_issue_key` | `analyze_pose` 반환의 이슈 식별자(예: `squat.left_knee_forward`), good은 빈 값 |
+| `expected_stage` | UP/DOWN/MID, stage 무관이면 빈 값 |
+| `view` | side/front/angle |
+| `member` | m1~m4 (체형 편향 분석용) |
+| `notes` | 자유 메모 |
+
+### test_dataset.py — 자동 검증 스크립트
+
+```bash
+python src/test_dataset.py                  # 전체 검증
+python src/test_dataset.py --exercise squat # 특정 운동만
+python src/test_dataset.py --member m1      # 특정 멤버만
+python src/test_dataset.py --verbose        # 통과 케이스도 출력
+```
+
+평가 로직:
+1. **posture 일치**: `expected_posture` vs `analyze_pose` 결과
+2. **이슈 메시지 포함**: `expected_issue_key`가 비어있지 않으면 `MSG[expected_issue_key]`가 `feedback`에 포함되는지 검사 (Korean substring match)
+3. **not_detected 케이스**: feedback이 정확히 `MSG["person_not_detected"]`와 일치
+4. **종료 코드**: 실패 0건이면 0, 1건 이상이면 1 (CI 통합 가능)
+
+출력: 라벨별/운동별 정확도 테이블 + 실패 케이스의 actual vs expected 상세
+
+### 기존 13장 마이그레이션
+
+10주차까지 평탄 배치되어 있던 13장(`pushup_*.jpg` 5장 + `person_capture_*.jpg` 3장 + 더미 3장 + 실수 파일 2장)을 `git mv`로 이력을 보존하며 라벨 폴더로 이동:
+
+| 원본 | 이동 위치 | 라벨 |
+|---|---|---|
+| `pushup_1.jpg` | `pushup/good_up/m1_side_01.jpg` | good_up (avg_elbow ~160) |
+| `pushup_2.jpg` | `pushup/good_down/m1_side_01.jpg` | good_down (avg_elbow ~96) |
+| `pushup_3.jpg` | `pushup/hip_sag/m1_side_01.jpg` | hip_sag |
+| `pushup_4.jpg` | `pushup/hip_pike/m1_side_01.jpg` | hip_pike |
+| `pushup_5.jpg` | `pushup/camera_angle/m1_front_01.jpg` | camera_angle |
+| `person_capture_*528/532.jpg` | `squat/good_up/m1_front_*.jpg` | good_up (기립) |
+| `person_capture_*536.jpg` | `squat/left_knee_forward/m1_side_01.jpg` | left_knee_forward |
+
+초기 검증 결과: **11/11 PASS (100%)** — 10주차 분석기 동작과 manifest 라벨이 완전 일치함을 확인.
+
+### 새 운동 추가 시 워크플로우
+
+1. `EXERCISE_REGISTRY`에 분석기 등록 (`up_thr` / `down_thr` / `primary_angle_keys` 클래스 속성 포함)
+2. `test_images/<exercise>/` 폴더 생성, 이슈 키별 하위 폴더 생성 (`.gitkeep`로 빈 폴더 보존)
+3. 팀원별 촬영 분담 (good_up/good_down + 각 이슈, 운동당 약 30장 목표 = 4인 × 라벨당 1~2장)
+4. `manifest.csv`에 행 추가
+5. `python src/test_dataset.py --exercise <exercise>` 실행 → 라벨별 정확도 확인
+
+### ExerciseSessionManager (`src/session_state.py`)
+
+`analyze_pose()`는 단일 프레임에 대해 stateless로 결과를 내지만, 실제 사용자 세션에서는 **rep 카운트·이슈 빈도·rep 단위 이슈 묶음** 같은 누적 상태가 필요하다. `ExerciseSessionManager`는 이 상태를 **운동별로 분리 보존**하는 단일 책임 매니저.
+
+```python
+sm = ExerciseSessionManager()
+result = analyze_pose(frame, "squat")
+enriched = sm.update("squat", result)  # → result + count/stage/rep_completed
+
+# 운동 전환 — squat 상태는 매니저 안에 그대로 보존
+result = analyze_pose(frame, "pushup")
+sm.update("pushup", result)
+
+# squat 으로 돌아가면 이전 카운트가 이어짐
+sm.update("squat", analyze_pose(frame, "squat"))
+
+summary = sm.get_summary()  # 세션 전체를 JSON 직렬화 가능한 dict로
+```
+
+설계 원칙:
+- **단일 책임**: 매니저는 상태만 다룬다. 분석은 호출자가 `analyze_pose()`로 수행 후 결과를 `update()`에 넘김 → 테스트·재사용 용이
+- **운동별 격리**: 한 운동의 카운터·이슈가 다른 운동의 통계를 오염시키지 않음. 운동 전환 시 자동으로 별도 `ExerciseState` bucket 생성
+- **Registry 자동 인식**: `EXERCISE_REGISTRY`에 새 분석기가 추가되면 매니저 코드 수정 없이 즉시 사용 가능 (rep 임계값을 분석기 클래스 속성에서 끌어옴)
+- **`reset(exercise=None)`**: 특정 운동만 또는 세션 전체 초기화 지원
+
+`ExerciseState` 필드:
+- `counter`: `RepCounter` (운동별 임계값 자동 주입)
+- `issue_counts`: `{full_key → 발생 횟수}` (full_key = `<exercise>.<issue>`)
+- `rep_records`: `[{"rep": int, "issues": [full_key, ...]}]` (rep 단위 이슈 묶음)
+- `last_posture` / `last_feedback`: 마지막 프레임 결과
+
+#### 분석기 출력 schema 확장 (11주차)
+
+`ExerciseAnalyzer.analyze()` 반환 dict에 **`issues: list[str]`** 추가 (exercise prefix 없는 이슈 키 — 예: `["hip_sag"]`). 매니저는 이 키를 받아 `<exercise>.<key>` 형태로 prepend해 `issue_counts`에 누적. 한국어 feedback 문자열 파싱 없이 깨끗한 통계 가능.
+
+기존 `posture` / `feedback` / `angles`는 유지 → 9·10주차 클라이언트 100% 하위 호환.
+
+#### FeedbackManager 키 통일 (11주차)
+
+8주차에 도입된 `FeedbackManager`는 squat 단일 운동 가정으로 prefix 없는 키(`left_knee_forward` 등)를 사용했고, 이를 위한 prefix-less compat dict `FEEDBACK_MESSAGES`가 별도로 있었다. 11주차 다중 운동 지원을 받아 다음과 같이 통일:
+
+- `update(issues, exercise: str)` — `exercise` 인자 신규. 내부에서 `<exercise>.<key>` 형태 full key로 prepend
+- 모든 내부 저장(`active_feedbacks` / `current_rep_issues` / `session_stats`)이 full key 사용 → 동일 issue 명을 갖는 다른 운동(예: `pushup.hip_sag` vs `lunge.hip_sag`) 격리
+- 한국어 메시지는 `feedback_messages.MESSAGES`를 full key로 직접 조회 → `FEEDBACK_MESSAGES` compat dict 제거 (deadcode)
+- `issues` 인자는 `["key", ...]` 문자열 리스트와 `[{"key": ..., "label": ...}, ...]` legacy dict 형식 모두 수용 → analyze_pose 결과를 그대로 흘려넣기 가능
+
+### LungeAnalyzer (앞다리 식별 휴리스틱)
+
+런지는 좌우 다리가 비대칭으로 동작하므로 폼 검사 전에 **앞다리 식별**이 선행되어야 한다. 단일 신호로는 안정적이지 않아 3-stage 폴백 체인을 사용한다.
+
+| 우선순위 | 신호 | 임계값 | 의도 |
+|---|---|---|---|
+| 1 | **Z (깊이)** — `ankle.z` 비교 | \|Δz\| > 0.05 | 측면 촬영에서 카메라에 더 가까운 발목(Z 작음)이 앞다리 |
+| 2 | **Y (높이) 폴백** — `knee.y` 비교 | \|Δy\| > 0.05 | Z가 ambiguous할 때 사용. 뒷다리 무릎이 바닥쪽으로 내려가므로 Y가 큼 |
+| 3 | **히스테리시스** — 이전 프레임 결정 유지 | — | Z·Y 모두 ambiguous면 직전 결과 그대로. 첫 프레임이면 None → `lunge.unknown_front_leg` |
+
+이슈 키: `front_knee_forward`, `trunk_lean`, `unknown_front_leg`. DOWN stage에서만 폼 검사.
+
+**메시지 카탈로그 (`feedback_messages.MESSAGES`)는 차기 분석기 확장 대비 5개 예약 키 포함**: `lunge.front_knee_inward` (무릎 valgus), `lunge.back_knee_high` (깊이 부족), `lunge.hip_drop` (골반 비대칭), `lunge.front_foot_lift` (앞발 뒤꿈치 들림), `lunge.knee_asymmetry` (양쪽 깊이 차). 분석기가 emit하기 시작하면 즉시 한국어 피드백이 노출되도록 사전 등록.
+
+**stateless 원칙의 예외**: `LungeAnalyzer`는 `_prev_front` 인스턴스 상태(히스테리시스)를 보유한다. `EXERCISE_REGISTRY`의 단일 인스턴스 공유는 단일 세션 가정. WebSocket 다중 클라이언트 환경에서는 클라이언트별 인스턴스 또는 세션 시작 시 `reset()` 호출이 필요. 이 제약은 12주차에 분석기 팩토리 도입 시점에 정리 예정.
+
+### RepCounter 일반화 (운동 무관 횟수 카운터)
+
+10주차까지 squat 전용이던 `SquatCounter`를 임계값·각도 키를 인자로 받는 `RepCounter`로 일반화하였다. 운동별 임계값은 **분석기 클래스 속성을 단일 출처**로 사용해 분석기 내부 stage 판정과 RepCounter가 자동으로 동기화된다.
+
+```python
+class SquatAnalyzer:
+    up_thr             = 160
+    down_thr           = 120
+    primary_angle_keys = ["left_knee", "right_knee"]
+    # analyze() 내부 stage 판정도 self.up_thr / self.down_thr 사용
+
+class PushupAnalyzer:
+    up_thr             = 160
+    down_thr           = 100
+    primary_angle_keys = ["left_elbow", "right_elbow"]
+
+# RepCounter — 운동 무관 카운터
+counter = make_rep_counter("squat")        # 분석기에서 임계값 자동 주입
+result = analyze_pose(frame, "squat")
+count, stage = counter.update(result["angles"])
+```
+
+핵심:
+- `RepCounter.update(angles: dict)` — `analyze_pose` 반환의 `angles`를 그대로 받음 (호출자가 분해 X)
+- `primary_angle_keys`로 좌·우 평균 처리 → squat=무릎, pushup=팔꿈치 모두 동일 코드로
+- `make_rep_counter(exercise)` 팩토리 — `EXERCISE_REGISTRY[exercise]`에서 임계값 끌어옴
+- 미지원 운동명 → `UnsupportedExerciseError`
+- `SquatCounter`는 8주차 시그니처(`update(angle_lk, angle_rk)`)를 보존한 **얇은 호환 래퍼**로 유지 — 내부적으로 `RepCounter`에 위임
+
+설계 결정:
+- 임계값 위치를 **분석기 클래스 속성** vs 별도 `REP_CONFIG` dict 두 안 중 전자 채택. 분석기의 stage 판정과 카운터가 같은 값을 공유하므로 임계값 변경 시 한 곳만 고치면 되어 불일치 위험 0
+- `ExerciseAnalyzer` Protocol에 `up_thr`/`down_thr`/`primary_angle_keys` 필드 추가 → 새 운동 분석기 작성 시 컨트랙트로 강제
 
 ## Conventions
 

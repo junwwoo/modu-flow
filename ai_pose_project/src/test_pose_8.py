@@ -76,11 +76,8 @@ JOINT_NAMES = {
 }
 
 # ──────────────────────────────────────────────────────────────
-# 스쿼트 판별 임계값
+# 스쿼트 폼 검사 임계값 (stage 임계값은 SquatAnalyzer 클래스 속성으로 이전)
 # ──────────────────────────────────────────────────────────────
-SQUAT_DOWN_THRESHOLD = 120
-SQUAT_UP_THRESHOLD   = 160
-
 KNEE_FORWARD_MARGIN  = 0.05
 TRUNK_LEAN_MARGIN    = 0.10
 
@@ -108,18 +105,6 @@ def calculate_angle(a, b, c):
     cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-6)
     cosine = np.clip(cosine, -1.0, 1.0)
     return round(np.degrees(np.arccos(cosine)), 1)
-
-
-# ──────────────────────────────────────────────────────────────
-# 피드백 메시지 매핑 (스쿼트 누적 상태 클래스 호환용 — prefix 없는 키)
-# 한국어 문구 자체는 feedback_messages.py에서 관리한다.
-# ──────────────────────────────────────────────────────────────
-FEEDBACK_MESSAGES = {
-    "left_knee_forward":  MSG["squat.left_knee_forward"],
-    "right_knee_forward": MSG["squat.right_knee_forward"],
-    "trunk_lean":         MSG["squat.trunk_lean"],
-    "knee_asymmetry":     MSG["squat.knee_asymmetry"],
-}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -156,46 +141,114 @@ def judge_squat_pose(landmarks, angle_lk, angle_rk):
 
 
 # ──────────────────────────────────────────────────────────────
-# 스쿼트 횟수 카운터 (외부 호출자가 누적 상태 관리에 사용)
+# 횟수 카운터 (외부 호출자가 누적 상태 관리에 사용)
+# 11주차: 운동별 분석기에서 임계값/key를 끌어다 쓰는 일반화 구조로 전환.
 # ──────────────────────────────────────────────────────────────
-class SquatCounter:
-    def __init__(self):
+class RepCounter:
+    """운동 무관 횟수 카운터.
+
+    Args:
+        up_thr: 평균 각도 > up_thr → UP 상태
+        down_thr: 평균 각도 < down_thr → DOWN 상태
+        primary_angle_keys: 평균을 계산할 angles dict의 키 목록
+                            (예: ["left_knee", "right_knee"])
+
+    DOWN → UP 전이 시 count 1 증가.
+    """
+    def __init__(self, up_thr: float, down_thr: float,
+                 primary_angle_keys: list[str]):
+        self.up_thr  = up_thr
+        self.down_thr = down_thr
+        self.keys = list(primary_angle_keys)
         self.count = 0
         self.stage = "UP"
 
-    def update(self, angle_lk, angle_rk):
-        avg_knee = (angle_lk + angle_rk) / 2
-
-        if avg_knee > SQUAT_UP_THRESHOLD:
+    def update(self, angles: dict) -> tuple[int, str]:
+        vals = [angles[k] for k in self.keys if k in angles]
+        if not vals:
+            return self.count, self.stage
+        avg = sum(vals) / len(vals)
+        if avg > self.up_thr:
             if self.stage == "DOWN":
                 self.count += 1
             self.stage = "UP"
-        elif avg_knee < SQUAT_DOWN_THRESHOLD:
+        elif avg < self.down_thr:
             self.stage = "DOWN"
-
         return self.count, self.stage
+
+
+def make_rep_counter(exercise: str) -> RepCounter:
+    """EXERCISE_REGISTRY의 분석기에서 임계값을 끌어와 RepCounter 생성."""
+    if exercise not in EXERCISE_REGISTRY:
+        raise UnsupportedExerciseError(exercise)
+    a = EXERCISE_REGISTRY[exercise]
+    return RepCounter(a.up_thr, a.down_thr, a.primary_angle_keys)
+
+
+class SquatCounter:
+    """8주차 호환 카운터 — 내부적으로 RepCounter("squat") 사용.
+
+    기존 호출 코드(`SquatCounter().update(angle_lk, angle_rk)`)와의
+    호환을 위해 시그니처만 보존하고 로직은 RepCounter에 위임한다.
+    """
+    def __init__(self):
+        a = SquatAnalyzer
+        self._inner = RepCounter(a.up_thr, a.down_thr, a.primary_angle_keys)
+
+    @property
+    def count(self) -> int:
+        return self._inner.count
+
+    @property
+    def stage(self) -> str:
+        return self._inner.stage
+
+    def update(self, angle_lk, angle_rk):
+        return self._inner.update({
+            "left_knee":  angle_lk,
+            "right_knee": angle_rk,
+        })
 
 
 # ──────────────────────────────────────────────────────────────
 # 피드백 관리자
+# 11주차: 모든 내부 키를 운동 prefix 포함 full key (`<exercise>.<issue>`)로 통일.
+# 한국어 문구는 `feedback_messages.MESSAGES`에서 직접 조회.
 # ──────────────────────────────────────────────────────────────
 class FeedbackManager:
+    """rep 단위 피드백 누적 관리.
+
+    내부 저장(active_feedbacks / current_rep_issues / session_stats)의 키는
+    모두 `<exercise>.<issue>` 형태의 full key로 통일되어, 다중 운동 세션에서도
+    이슈 통계가 운동별로 분리된다.
+    """
     def __init__(self):
-        self.active_feedbacks = {}
-        self.current_rep_issues = set()
-        self.session_stats = {}
+        self.active_feedbacks: dict[str, tuple[str, float]] = {}  # full_key → (msg, expire_at)
+        self.current_rep_issues: set[str] = set()                  # full_keys
+        self.session_stats: dict[str, int] = {}                    # full_key → 누적 발생 횟수
         self.rep_summary = ""
         self.rep_summary_expire = 0.0
 
-    def update(self, issues, stage):
+    def update(self, issues, exercise: str):
+        """이슈 리스트를 받아 통계·활성 피드백 갱신.
+
+        Args:
+            issues:   이슈 키 리스트. 두 형식 모두 지원:
+                      - `["left_knee_forward", ...]` (analyze_pose 의 "issues" 그대로)
+                      - `[{"key": "left_knee_forward", "label": ...}, ...]` (legacy)
+            exercise: 운동명. full_key prefix로 prepend 됨.
+        """
         now = time.time()
         for issue in issues:
-            key = issue["key"]
-            self.current_rep_issues.add(key)
-            self.session_stats[key] = self.session_stats.get(key, 0) + 1
-            msg = FEEDBACK_MESSAGES.get(key, "")
+            key = issue["key"] if isinstance(issue, dict) else issue
+            if not key:
+                continue
+            full_key = f"{exercise}.{key}"
+            self.current_rep_issues.add(full_key)
+            self.session_stats[full_key] = self.session_stats.get(full_key, 0) + 1
+            msg = MSG.get(full_key, "")
             if msg:
-                self.active_feedbacks[key] = (msg, now + FEEDBACK_DISPLAY_SEC)
+                self.active_feedbacks[full_key] = (msg, now + FEEDBACK_DISPLAY_SEC)
 
         expired = [k for k, (_, t) in self.active_feedbacks.items() if now > t]
         for k in expired:
@@ -203,8 +256,7 @@ class FeedbackManager:
 
     def on_rep_complete(self, rep_count):
         if self.current_rep_issues:
-            labels = [FEEDBACK_MESSAGES[k]
-                      for k in self.current_rep_issues if k in FEEDBACK_MESSAGES]
+            labels = [MSG[k] for k in self.current_rep_issues if k in MSG]
             self.rep_summary = f"{rep_count}회차: {', '.join(labels)}"
         else:
             self.rep_summary = f"{rep_count}회차: 좋은 자세입니다."
@@ -224,8 +276,8 @@ class FeedbackManager:
         if not self.session_stats:
             return "감지된 문제 없음"
         parts = []
-        for key, cnt in self.session_stats.items():
-            label = FEEDBACK_MESSAGES.get(key, key)
+        for full_key, cnt in self.session_stats.items():
+            label = MSG.get(full_key, full_key)
             parts.append(f"{label} ({cnt}회)")
         return " | ".join(parts)
 
@@ -458,19 +510,36 @@ class UnsupportedExerciseError(ValueError):
 
 
 class ExerciseAnalyzer(Protocol):
-    """운동별 분석기 인터페이스 (stateless).
+    """운동별 분석기 인터페이스 (stateless 권장).
 
     구현체는 입력 landmarks(MediaPipe pose_landmarks[0])로부터
-    각도·자세·피드백을 계산하여 dict로 반환한다.
-    rep 카운팅·이슈 누적 등 stateful 처리는 외부 호출자가 담당한다.
+    각도·자세·피드백·이슈 키를 계산하여 dict로 반환한다.
+    rep 카운팅·이슈 누적 등 stateful 처리는 외부 호출자(`ExerciseSessionManager`)가 담당한다.
+
+    반환 dict schema:
+        - "posture":  "good" | "bad"
+        - "feedback": 사용자에게 표시할 한국어 메시지 (이슈 메시지 결합)
+        - "angles":   {각도 키 → 값 (도 단위)}
+        - "issues":   list[str] — exercise prefix 없는 이슈 키 (예: ["hip_sag"])
+
+    11주차: stage 판정 임계값과 카운터용 key를 클래스 속성으로 노출하여
+    `RepCounter`/`make_rep_counter`가 단일 출처를 참조하도록 한다.
     """
     name: str
+    up_thr: float
+    down_thr: float
+    primary_angle_keys: list[str]
     def analyze(self, landmarks) -> dict: ...
 
 
 class SquatAnalyzer:
     """스쿼트 분석기 (기존 judge_squat_pose 로직 캡슐화)."""
     name = "squat"
+
+    # stage 판정 + RepCounter 공용 임계값
+    up_thr             = 160
+    down_thr           = 120
+    primary_angle_keys = ["left_knee", "right_knee"]
 
     def analyze(self, landmarks) -> dict:
         def xy(idx):
@@ -490,21 +559,22 @@ class SquatAnalyzer:
         }
 
         avg_knee = (angle_lk + angle_rk) / 2
-        if avg_knee < SQUAT_DOWN_THRESHOLD:
+        if avg_knee < self.down_thr:
             stage = "DOWN"
-        elif avg_knee > SQUAT_UP_THRESHOLD:
+        elif avg_knee > self.up_thr:
             stage = "UP"
         else:
             stage = "MID"
 
-        is_normal, issues = True, []
+        is_normal, issue_dicts = True, []
         if stage == "DOWN":
-            is_normal, issues = judge_squat_pose(landmarks, angle_lk, angle_rk)
+            is_normal, issue_dicts = judge_squat_pose(landmarks, angle_lk, angle_rk)
 
+        issue_keys = [i["key"] for i in issue_dicts]
         posture = "good" if is_normal else "bad"
 
-        if issues:
-            msgs = [MSG.get(f"squat.{i['key']}", i["label"]) for i in issues]
+        if issue_dicts:
+            msgs = [MSG.get(f"squat.{i['key']}", i["label"]) for i in issue_dicts]
             feedback_msg = " | ".join(msgs)
         elif stage == "DOWN":
             feedback_msg = MSG["squat.good_form"]
@@ -515,14 +585,14 @@ class SquatAnalyzer:
             "posture":  posture,
             "feedback": feedback_msg,
             "angles":   angles,
+            "issues":   issue_keys,
         }
 
 
 # ──────────────────────────────────────────────────────────────
-# 푸시업 임계값 (10주차, 5장 표본 1차 튜닝)
+# 푸시업 폼 검사 임계값 (10주차, 5장 표본 1차 튜닝)
+# stage 임계값(up/down)은 PushupAnalyzer 클래스 속성으로 이전 (11주차)
 # ──────────────────────────────────────────────────────────────
-PUSHUP_DOWN_THRESHOLD       = 100
-PUSHUP_UP_THRESHOLD         = 160
 PUSHUP_HIP_DEVIATION_MARGIN = 0.035  # 어깨-발목 중간 Y 대비 엉덩이 Y 편차 임계
 PUSHUP_ELBOW_FLARE_RATIO    = 0.5    # 어깨 폭 대비 어깨-팔꿈치 X 거리 비율 (정면일 때만 사용)
 PUSHUP_CAMERA_FRONTAL_RATIO = 0.4    # 어깨 X 거리 / 어깨-엉덩이 Y 거리 임계
@@ -534,6 +604,11 @@ class PushupAnalyzer:
     측면 촬영을 가정하며, 정면이 의심되면 `pushup.camera_angle` 이슈로 안내.
     """
     name = "pushup"
+
+    # stage 판정 + RepCounter 공용 임계값
+    up_thr             = 160
+    down_thr           = 100
+    primary_angle_keys = ["left_elbow", "right_elbow"]
 
     def analyze(self, landmarks) -> dict:
         def xy(idx):
@@ -553,9 +628,9 @@ class PushupAnalyzer:
         }
 
         avg_elbow = (angle_le + angle_re) / 2
-        if avg_elbow < PUSHUP_DOWN_THRESHOLD:
+        if avg_elbow < self.down_thr:
             stage = "DOWN"
-        elif avg_elbow > PUSHUP_UP_THRESHOLD:
+        elif avg_elbow > self.up_thr:
             stage = "UP"
         else:
             stage = "MID"
@@ -575,6 +650,7 @@ class PushupAnalyzer:
             "posture":  posture,
             "feedback": feedback_msg,
             "angles":   angles,
+            "issues":   issues,
         }
 
     def _check_form(self, landmarks):
@@ -612,11 +688,146 @@ class PushupAnalyzer:
 
 
 # ──────────────────────────────────────────────────────────────
+# 런지 분석기 (11주차 신규)
+# ──────────────────────────────────────────────────────────────
+LUNGE_FRONT_LEG_Z_MARGIN  = 0.05  # |Δz| 이하면 Y로 폴백
+LUNGE_FRONT_LEG_Y_MARGIN  = 0.05  # |Δy(knee)| 이하면 히스테리시스로 폴백
+LUNGE_KNEE_FORWARD_MARGIN = 0.05  # 앞다리 무릎 X가 발목보다 전방 (squat과 동일 규약)
+LUNGE_TRUNK_LEAN_MARGIN   = 0.10  # 어깨-엉덩이 Y 차이 임계
+
+
+class LungeAnalyzer:
+    """런지 분석기.
+
+    앞다리 식별 휴리스틱 (Z → Y → 히스테리시스):
+      1) **Z (깊이)** — 측면 촬영에서 카메라에 더 가까운 발목(Z 작음)이 앞다리.
+         |Δz| > Z_MARGIN 이면 Z 단독으로 결정.
+      2) **Y (높이) 폴백** — Z가 ambiguous할 때 무릎 Y 비교. 뒷다리 무릎은
+         바닥쪽으로 내려가므로 Y가 크다 → 앞다리는 무릎 Y가 더 작은 쪽.
+      3) **히스테리시스** — Z, Y 모두 ambiguous하면 이전 프레임 결정 유지.
+         첫 프레임에서 모두 ambiguous면 식별 불가(`unknown_front_leg`).
+
+    주의: 다른 분석기와 달리 앞다리 식별 결과를 인스턴스 상태로 보존한다.
+    `EXERCISE_REGISTRY`의 단일 인스턴스 공유는 단일 세션을 가정한다.
+    멀티 클라이언트(WebSocket 다중 연결) 환경에서는 클라이언트별 인스턴스를
+    생성하거나 매 세션 시작 시 `reset()`을 호출해야 한다.
+    """
+    name = "lunge"
+
+    # stage 판정 + RepCounter 공용 임계값 (squat과 동일 — 양 무릎 평균 기반)
+    up_thr             = 160
+    down_thr           = 120
+    primary_angle_keys = ["left_knee", "right_knee"]
+
+    def __init__(self):
+        self._prev_front: str | None = None  # "left" | "right" | None
+
+    def reset(self) -> None:
+        """앞다리 식별 히스테리시스 상태 초기화."""
+        self._prev_front = None
+
+    def analyze(self, landmarks) -> dict:
+        def xy(idx):
+            lm = landmarks[idx]
+            return (lm.x, lm.y)
+
+        angle_lk = calculate_angle(xy(LEFT_HIP),       xy(LEFT_KNEE),  xy(LEFT_ANKLE))
+        angle_rk = calculate_angle(xy(RIGHT_HIP),      xy(RIGHT_KNEE), xy(RIGHT_ANKLE))
+        angle_lh = calculate_angle(xy(LEFT_SHOULDER),  xy(LEFT_HIP),   xy(LEFT_KNEE))
+        angle_rh = calculate_angle(xy(RIGHT_SHOULDER), xy(RIGHT_HIP),  xy(RIGHT_KNEE))
+
+        angles = {
+            "left_knee":  angle_lk,
+            "right_knee": angle_rk,
+            "left_hip":   angle_lh,
+            "right_hip":  angle_rh,
+        }
+
+        avg_knee = (angle_lk + angle_rk) / 2
+        if avg_knee < self.down_thr:
+            stage = "DOWN"
+        elif avg_knee > self.up_thr:
+            stage = "UP"
+        else:
+            stage = "MID"
+
+        front_leg = self._identify_front_leg(landmarks)
+
+        issues: list[str] = []
+        if stage == "DOWN":
+            if front_leg is None:
+                issues.append("unknown_front_leg")
+            else:
+                issues.extend(self._check_form(landmarks, front_leg))
+
+        posture = "good" if not issues else "bad"
+
+        if issues:
+            msgs = [MSG.get(f"lunge.{k}", k) for k in issues]
+            feedback_msg = " | ".join(msgs)
+        elif stage == "DOWN":
+            feedback_msg = MSG["lunge.good_form"]
+        else:
+            feedback_msg = MSG["lunge.standby"]
+
+        return {
+            "posture":  posture,
+            "feedback": feedback_msg,
+            "angles":   angles,
+            "issues":   issues,
+        }
+
+    def _identify_front_leg(self, landmarks) -> str | None:
+        """앞다리 ('left' / 'right') 식별. 모두 ambiguous하면 None."""
+        la = landmarks[LEFT_ANKLE];  ra = landmarks[RIGHT_ANKLE]
+        # 1) Z: 더 작은(카메라 가까운) 쪽이 앞다리
+        z_diff = la.z - ra.z
+        if abs(z_diff) > LUNGE_FRONT_LEG_Z_MARGIN:
+            front = "left" if z_diff < 0 else "right"
+            self._prev_front = front
+            return front
+
+        # 2) Y 폴백: 무릎 Y가 더 작은(이미지 위쪽) 쪽이 앞다리
+        lk = landmarks[LEFT_KNEE];  rk = landmarks[RIGHT_KNEE]
+        y_diff = lk.y - rk.y
+        if abs(y_diff) > LUNGE_FRONT_LEG_Y_MARGIN:
+            front = "left" if y_diff < 0 else "right"
+            self._prev_front = front
+            return front
+
+        # 3) 히스테리시스: 이전 결정 유지 (첫 프레임이면 None)
+        return self._prev_front
+
+    def _check_form(self, landmarks, front_leg: str) -> list[str]:
+        if front_leg == "left":
+            knee, ankle = landmarks[LEFT_KNEE], landmarks[LEFT_ANKLE]
+        else:
+            knee, ankle = landmarks[RIGHT_KNEE], landmarks[RIGHT_ANKLE]
+
+        issues: list[str] = []
+
+        # 앞다리 무릎이 발목보다 X 전방 (squat의 knee_forward와 동일 규약)
+        if knee.x - ankle.x > LUNGE_KNEE_FORWARD_MARGIN:
+            issues.append("front_knee_forward")
+
+        # 상체 기울임 (어깨가 엉덩이보다 충분히 위에 있지 않음)
+        ls = landmarks[LEFT_SHOULDER];  rs = landmarks[RIGHT_SHOULDER]
+        lh = landmarks[LEFT_HIP];       rh = landmarks[RIGHT_HIP]
+        avg_sho_y = (ls.y + rs.y) / 2
+        avg_hip_y = (lh.y + rh.y) / 2
+        if avg_hip_y - avg_sho_y > LUNGE_TRUNK_LEAN_MARGIN:
+            issues.append("trunk_lean")
+
+        return issues
+
+
+# ──────────────────────────────────────────────────────────────
 # 운동 레지스트리 (분석기 dispatch)
 # ──────────────────────────────────────────────────────────────
 EXERCISE_REGISTRY: dict[str, ExerciseAnalyzer] = {
     "squat":  SquatAnalyzer(),
     "pushup": PushupAnalyzer(),
+    "lunge":  LungeAnalyzer(),
 }
 
 
@@ -655,6 +866,7 @@ def analyze_pose(image, exercise: str = "squat"):
             "posture":  "bad",
             "feedback": MSG["person_not_detected"],
             "angles":   {},
+            "issues":   [],
             "exercise": exercise,
         }
 
