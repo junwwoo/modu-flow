@@ -41,10 +41,11 @@ def test_health():
 
 def test_rest():
     print("\n" + "=" * 70)
-    print("REST 테스트: POST /analyze")
+    print("REST 테스트: POST /analyze (exercise 미지정 → squat 회귀 검증)")
     print("=" * 70)
 
-    for f in list_images():
+    files = list_images()
+    for f in files:
         path = os.path.join(TEST_DIR, f)
         b64  = encode_b64(path)
         try:
@@ -56,6 +57,7 @@ def test_rest():
             print(f"\n[{f}]  HTTP {r.status_code}")
             if r.status_code == 200:
                 body = r.json()
+                print(f"  exercise: {body.get('exercise')}")
                 print(f"  posture : {body['posture']}")
                 print(f"  feedback: {body['feedback']}")
                 print(f"  angles  : {body['angles']}")
@@ -63,6 +65,34 @@ def test_rest():
                 print(f"  body: {r.text}")
         except Exception as e:
             print(f"[{f}] ERROR: {e}")
+
+    # 운동 선택: pushup (10주차)
+    if files:
+        print("\n[exercise=pushup]")
+        b64 = encode_b64(os.path.join(TEST_DIR, files[0]))
+        r = requests.post(
+            f"{SERVER}/analyze",
+            json={"image": b64, "exercise": "pushup"},
+            timeout=30,
+        )
+        print(f"  HTTP {r.status_code}")
+        if r.status_code == 200:
+            body = r.json()
+            print(f"  exercise: {body.get('exercise')}")
+            print(f"  posture : {body['posture']}")
+            print(f"  feedback: {body['feedback']}")
+            print(f"  angles  : {body['angles']}")
+
+    # 에러 케이스: 미지원 운동명 (10주차 신규)
+    print("\n[exercise=plank (미지원)]")
+    if files:
+        b64 = encode_b64(os.path.join(TEST_DIR, files[0]))
+        r = requests.post(
+            f"{SERVER}/analyze",
+            json={"image": b64, "exercise": "plank"},
+            timeout=10,
+        )
+        print(f"  HTTP {r.status_code}  {r.text}")
 
     # 에러 케이스: 잘못된 base64
     print("\n[잘못된 base64]")
@@ -84,7 +114,7 @@ async def test_websocket():
 
     files = list_images()
     async with websockets.connect(WS_URL) as ws:
-        # 1) 정상 케이스: 여러 프레임 연속 전송
+        # 1) 정상 케이스 (exercise 미지정 → squat 회귀)
         for f in files:
             path = os.path.join(TEST_DIR, f)
             b64  = encode_b64(path)
@@ -93,23 +123,42 @@ async def test_websocket():
             print(f"\n[{f}]")
             print(f"  type    : {data['type']}")
             if data["type"] == "result":
+                print(f"  exercise: {data.get('exercise')}")
                 print(f"  posture : {data['posture']}")
                 print(f"  feedback: {data['feedback']}")
                 print(f"  angles  : {data['angles']}")
             else:
                 print(f"  message : {data.get('message')}")
 
-        # 2) 에러: 지원하지 않는 type
+        # 2) 운동 전환: 같은 연결에서 squat → pushup (10주차)
+        if files:
+            print("\n[같은 연결에서 squat → pushup 전환]")
+            b64 = encode_b64(os.path.join(TEST_DIR, files[0]))
+            await ws.send(json.dumps({"type": "frame", "image": b64, "exercise": "squat"}))
+            r1 = json.loads(await ws.recv())
+            await ws.send(json.dumps({"type": "frame", "image": b64, "exercise": "pushup"}))
+            r2 = json.loads(await ws.recv())
+            print(f"  squat  → exercise={r1.get('exercise')} angles_keys={list(r1.get('angles', {}).keys())}")
+            print(f"  pushup → exercise={r2.get('exercise')} angles_keys={list(r2.get('angles', {}).keys())}")
+
+        # 3) 에러: 미지원 운동명 (10주차 신규)
+        print("\n[exercise=plank (미지원)]")
+        if files:
+            b64 = encode_b64(os.path.join(TEST_DIR, files[0]))
+            await ws.send(json.dumps({"type": "frame", "image": b64, "exercise": "plank"}))
+            print(f"  {await ws.recv()}")
+
+        # 4) 에러: 지원하지 않는 type
         print("\n[지원하지 않는 type]")
         await ws.send(json.dumps({"type": "wrong", "image": ""}))
         print(f"  {await ws.recv()}")
 
-        # 3) 에러: 잘못된 base64
+        # 5) 에러: 잘못된 base64
         print("\n[잘못된 base64]")
         await ws.send(json.dumps({"type": "frame", "image": "!!!not_base64"}))
         print(f"  {await ws.recv()}")
 
-        # 4) 연결 유지 검증: 에러 직후에도 정상 메시지 처리되는가
+        # 6) 연결 유지 검증: 에러 직후에도 정상 메시지 처리되는가
         print("\n[연결 유지 검증: 에러 후 정상 요청]")
         b64 = encode_b64(os.path.join(TEST_DIR, files[0]))
         await ws.send(json.dumps({"type": "frame", "image": b64}))

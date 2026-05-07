@@ -9,6 +9,10 @@ import os
 import queue
 import threading
 from datetime import datetime
+from typing import Protocol
+
+import feedback_messages
+from feedback_messages import MESSAGES as MSG
 
 try:
     import requests
@@ -107,13 +111,14 @@ def calculate_angle(a, b, c):
 
 
 # ──────────────────────────────────────────────────────────────
-# 피드백 메시지 매핑
+# 피드백 메시지 매핑 (스쿼트 누적 상태 클래스 호환용 — prefix 없는 키)
+# 한국어 문구 자체는 feedback_messages.py에서 관리한다.
 # ──────────────────────────────────────────────────────────────
 FEEDBACK_MESSAGES = {
-    "left_knee_forward":  "Tip: Push LEFT knee back, align over ankle",
-    "right_knee_forward": "Tip: Push RIGHT knee back, align over ankle",
-    "trunk_lean":         "Tip: Lift your chest, keep torso upright",
-    "knee_asymmetry":     "Tip: Balance both knees evenly",
+    "left_knee_forward":  MSG["squat.left_knee_forward"],
+    "right_knee_forward": MSG["squat.right_knee_forward"],
+    "trunk_lean":         MSG["squat.trunk_lean"],
+    "knee_asymmetry":     MSG["squat.knee_asymmetry"],
 }
 
 
@@ -198,11 +203,11 @@ class FeedbackManager:
 
     def on_rep_complete(self, rep_count):
         if self.current_rep_issues:
-            labels = [FEEDBACK_MESSAGES[k].replace("Tip: ", "")
+            labels = [FEEDBACK_MESSAGES[k]
                       for k in self.current_rep_issues if k in FEEDBACK_MESSAGES]
-            self.rep_summary = f"Rep {rep_count}: {', '.join(labels)}"
+            self.rep_summary = f"{rep_count}회차: {', '.join(labels)}"
         else:
-            self.rep_summary = f"Rep {rep_count}: Good form!"
+            self.rep_summary = f"{rep_count}회차: 좋은 자세입니다."
         self.rep_summary_expire = time.time() + FEEDBACK_DISPLAY_SEC
         self.current_rep_issues.clear()
 
@@ -217,11 +222,11 @@ class FeedbackManager:
 
     def get_session_summary(self):
         if not self.session_stats:
-            return "No issues detected"
+            return "감지된 문제 없음"
         parts = []
         for key, cnt in self.session_stats.items():
-            label = key.replace("_", " ").title()
-            parts.append(f"{label}: {cnt}")
+            label = FEEDBACK_MESSAGES.get(key, key)
+            parts.append(f"{label} ({cnt}회)")
         return " | ".join(parts)
 
 
@@ -443,23 +448,204 @@ class PoseAPIClient:
 
 
 # ──────────────────────────────────────────────────────────────
-# [8주차 핵심] 단일 프레임 자세 분석 함수
+# 운동별 분석기 (10주차: Strategy + Registry)
 # ──────────────────────────────────────────────────────────────
-def analyze_pose(image):
+class UnsupportedExerciseError(ValueError):
+    """미지원 운동명에 대한 예외."""
+    def __init__(self, exercise: str):
+        self.exercise = exercise
+        super().__init__(f"Unsupported exercise: {exercise}")
+
+
+class ExerciseAnalyzer(Protocol):
+    """운동별 분석기 인터페이스 (stateless).
+
+    구현체는 입력 landmarks(MediaPipe pose_landmarks[0])로부터
+    각도·자세·피드백을 계산하여 dict로 반환한다.
+    rep 카운팅·이슈 누적 등 stateful 처리는 외부 호출자가 담당한다.
+    """
+    name: str
+    def analyze(self, landmarks) -> dict: ...
+
+
+class SquatAnalyzer:
+    """스쿼트 분석기 (기존 judge_squat_pose 로직 캡슐화)."""
+    name = "squat"
+
+    def analyze(self, landmarks) -> dict:
+        def xy(idx):
+            lm = landmarks[idx]
+            return (lm.x, lm.y)
+
+        angle_lk = calculate_angle(xy(LEFT_HIP),       xy(LEFT_KNEE),  xy(LEFT_ANKLE))
+        angle_rk = calculate_angle(xy(RIGHT_HIP),      xy(RIGHT_KNEE), xy(RIGHT_ANKLE))
+        angle_lh = calculate_angle(xy(LEFT_SHOULDER),  xy(LEFT_HIP),   xy(LEFT_KNEE))
+        angle_rh = calculate_angle(xy(RIGHT_SHOULDER), xy(RIGHT_HIP),  xy(RIGHT_KNEE))
+
+        angles = {
+            "left_knee":  angle_lk,
+            "right_knee": angle_rk,
+            "left_hip":   angle_lh,
+            "right_hip":  angle_rh,
+        }
+
+        avg_knee = (angle_lk + angle_rk) / 2
+        if avg_knee < SQUAT_DOWN_THRESHOLD:
+            stage = "DOWN"
+        elif avg_knee > SQUAT_UP_THRESHOLD:
+            stage = "UP"
+        else:
+            stage = "MID"
+
+        is_normal, issues = True, []
+        if stage == "DOWN":
+            is_normal, issues = judge_squat_pose(landmarks, angle_lk, angle_rk)
+
+        posture = "good" if is_normal else "bad"
+
+        if issues:
+            msgs = [MSG.get(f"squat.{i['key']}", i["label"]) for i in issues]
+            feedback_msg = " | ".join(msgs)
+        elif stage == "DOWN":
+            feedback_msg = MSG["squat.good_form"]
+        else:
+            feedback_msg = MSG["squat.standby"]
+
+        return {
+            "posture":  posture,
+            "feedback": feedback_msg,
+            "angles":   angles,
+        }
+
+
+# ──────────────────────────────────────────────────────────────
+# 푸시업 임계값 (10주차, 5장 표본 1차 튜닝)
+# ──────────────────────────────────────────────────────────────
+PUSHUP_DOWN_THRESHOLD       = 100
+PUSHUP_UP_THRESHOLD         = 160
+PUSHUP_HIP_DEVIATION_MARGIN = 0.035  # 어깨-발목 중간 Y 대비 엉덩이 Y 편차 임계
+PUSHUP_ELBOW_FLARE_RATIO    = 0.5    # 어깨 폭 대비 어깨-팔꿈치 X 거리 비율 (정면일 때만 사용)
+PUSHUP_CAMERA_FRONTAL_RATIO = 0.4    # 어깨 X 거리 / 어깨-엉덩이 Y 거리 임계
+
+
+class PushupAnalyzer:
+    """푸시업 분석기 (10주차 신규).
+
+    측면 촬영을 가정하며, 정면이 의심되면 `pushup.camera_angle` 이슈로 안내.
+    """
+    name = "pushup"
+
+    def analyze(self, landmarks) -> dict:
+        def xy(idx):
+            lm = landmarks[idx]
+            return (lm.x, lm.y)
+
+        angle_le = calculate_angle(xy(LEFT_SHOULDER),  xy(LEFT_ELBOW),  xy(LEFT_WRIST))
+        angle_re = calculate_angle(xy(RIGHT_SHOULDER), xy(RIGHT_ELBOW), xy(RIGHT_WRIST))
+        angle_ls = calculate_angle(xy(LEFT_HIP),       xy(LEFT_SHOULDER),  xy(LEFT_ELBOW))
+        angle_rs = calculate_angle(xy(RIGHT_HIP),      xy(RIGHT_SHOULDER), xy(RIGHT_ELBOW))
+
+        angles = {
+            "left_elbow":     angle_le,
+            "right_elbow":    angle_re,
+            "left_shoulder":  angle_ls,
+            "right_shoulder": angle_rs,
+        }
+
+        avg_elbow = (angle_le + angle_re) / 2
+        if avg_elbow < PUSHUP_DOWN_THRESHOLD:
+            stage = "DOWN"
+        elif avg_elbow > PUSHUP_UP_THRESHOLD:
+            stage = "UP"
+        else:
+            stage = "MID"
+
+        issues = self._check_form(landmarks)
+        posture = "good" if not issues else "bad"
+
+        if issues:
+            msgs = [MSG.get(f"pushup.{k}", k) for k in issues]
+            feedback_msg = " | ".join(msgs)
+        elif stage == "DOWN":
+            feedback_msg = MSG["pushup.good_form"]
+        else:
+            feedback_msg = MSG["pushup.standby"]
+
+        return {
+            "posture":  posture,
+            "feedback": feedback_msg,
+            "angles":   angles,
+        }
+
+    def _check_form(self, landmarks):
+        ls = landmarks[LEFT_SHOULDER];  rs = landmarks[RIGHT_SHOULDER]
+        le = landmarks[LEFT_ELBOW];     re_ = landmarks[RIGHT_ELBOW]
+        lh = landmarks[LEFT_HIP];       rh = landmarks[RIGHT_HIP]
+        la = landmarks[LEFT_ANKLE];     ra = landmarks[RIGHT_ANKLE]
+
+        avg_sho_y   = (ls.y + rs.y) / 2
+        avg_hip_y   = (lh.y + rh.y) / 2
+        avg_ankle_y = (la.y + ra.y) / 2
+        shoulder_x_dist = abs(ls.x - rs.x)
+        torso_y_dist    = abs(avg_hip_y - avg_sho_y)
+
+        # 카메라 각도: 정면 촬영이 의심되면 다른 폼 검사는 부정확하므로 스킵하고
+        # camera_angle 안내만 반환 (사용자에게 측면 재촬영을 우선 요청).
+        if torso_y_dist > 1e-6:
+            if shoulder_x_dist / torso_y_dist > PUSHUP_CAMERA_FRONTAL_RATIO:
+                return ["camera_angle"]
+
+        issues = []
+
+        # 엉덩이 처짐(hip_sag) / 솟음(hip_pike): 어깨-발목 중간선 대비 편차
+        line_mid_y = (avg_sho_y + avg_ankle_y) / 2
+        deviation  = avg_hip_y - line_mid_y
+        if deviation > PUSHUP_HIP_DEVIATION_MARGIN:
+            issues.append("hip_sag")
+        elif deviation < -PUSHUP_HIP_DEVIATION_MARGIN:
+            issues.append("hip_pike")
+
+        # 팔꿈치 벌어짐(elbow_flare): 측면 촬영에서는 어깨 X 폭이 너무 작아
+        # 비율이 폭발하므로 의미 있는 신호가 안 됨. 정면일 때만 동작시키지만
+        # 정면이면 위에서 이미 return했으므로 여기 도달하지 않음.
+        return issues
+
+
+# ──────────────────────────────────────────────────────────────
+# 운동 레지스트리 (분석기 dispatch)
+# ──────────────────────────────────────────────────────────────
+EXERCISE_REGISTRY: dict[str, ExerciseAnalyzer] = {
+    "squat":  SquatAnalyzer(),
+    "pushup": PushupAnalyzer(),
+}
+
+
+# ──────────────────────────────────────────────────────────────
+# [8주차 핵심 / 10주차 확장] 단일 프레임 자세 분석 함수
+# ──────────────────────────────────────────────────────────────
+def analyze_pose(image, exercise: str = "squat"):
     """
     BGR numpy 이미지 한 장을 입력받아 자세 분석 결과를 dict로 반환한다.
 
     Args:
         image (np.ndarray): OpenCV BGR 이미지 (H x W x 3)
+        exercise (str): 분석할 운동 종류. `EXERCISE_REGISTRY` 키 중 하나.
+                        기본값 "squat" (9주차 클라이언트 하위 호환).
 
     Returns:
         dict: {
             "posture":  "good" | "bad",
-            "feedback": 자세 교정 메시지 (문자열),
-            "angles":   { "left_knee": ..., "right_knee": ...,
-                          "left_hip":  ..., "right_hip":  ... }
+            "feedback": 한국어 피드백 메시지,
+            "angles":   { 운동별 각도 dict },
+            "exercise": 분석에 사용한 운동명
         }
+
+    Raises:
+        UnsupportedExerciseError: `exercise`가 EXERCISE_REGISTRY에 없을 때
     """
+    if exercise not in EXERCISE_REGISTRY:
+        raise UnsupportedExerciseError(exercise)
+
     rgb_frame = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     mp_image  = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
     result    = _landmarker.detect(mp_image)
@@ -467,52 +653,12 @@ def analyze_pose(image):
     if not result.pose_landmarks:
         return {
             "posture":  "bad",
-            "feedback": "Person not detected",
+            "feedback": MSG["person_not_detected"],
             "angles":   {},
+            "exercise": exercise,
         }
 
     landmarks = result.pose_landmarks[0]
-
-    def xy(idx):
-        lm = landmarks[idx]
-        return (lm.x, lm.y)
-
-    angle_lk = calculate_angle(xy(LEFT_HIP),       xy(LEFT_KNEE),  xy(LEFT_ANKLE))
-    angle_rk = calculate_angle(xy(RIGHT_HIP),      xy(RIGHT_KNEE), xy(RIGHT_ANKLE))
-    angle_lh = calculate_angle(xy(LEFT_SHOULDER),  xy(LEFT_HIP),   xy(LEFT_KNEE))
-    angle_rh = calculate_angle(xy(RIGHT_SHOULDER), xy(RIGHT_HIP),  xy(RIGHT_KNEE))
-
-    angles = {
-        "left_knee":  angle_lk,
-        "right_knee": angle_rk,
-        "left_hip":   angle_lh,
-        "right_hip":  angle_rh,
-    }
-
-    avg_knee = (angle_lk + angle_rk) / 2
-    if avg_knee < SQUAT_DOWN_THRESHOLD:
-        stage = "DOWN"
-    elif avg_knee > SQUAT_UP_THRESHOLD:
-        stage = "UP"
-    else:
-        stage = "MID"
-
-    is_normal, issues = True, []
-    if stage == "DOWN":
-        is_normal, issues = judge_squat_pose(landmarks, angle_lk, angle_rk)
-
-    posture = "good" if is_normal else "bad"
-
-    if issues:
-        msgs = [FEEDBACK_MESSAGES.get(i["key"], i["label"]) for i in issues]
-        feedback_msg = " | ".join(msgs)
-    elif stage == "DOWN":
-        feedback_msg = "Good squat form!"
-    else:
-        feedback_msg = "Stand by"
-
-    return {
-        "posture":  posture,
-        "feedback": feedback_msg,
-        "angles":   angles,
-    }
+    out = EXERCISE_REGISTRY[exercise].analyze(landmarks)
+    out["exercise"] = exercise
+    return out

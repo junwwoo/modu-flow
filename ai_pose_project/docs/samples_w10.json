@@ -1,0 +1,115 @@
+{
+  "rest_squat_omitted_exercise": {
+    "request": {
+      "image": "<base64 image>",
+      "_note": "exercise omitted"
+    },
+    "status": 200,
+    "response": {
+      "posture": "bad",
+      "feedback": "왼쪽 무릎이 발끝보다 앞으로 나갔습니다. 무릎을 발목 위로 정렬하세요. | 오른쪽 무릎이 발끝보다 앞으로 나갔습니다. 무릎을 발목 위로 정렬하세요. | 상체가 너무 숙여졌습니다. 가슴을 들고 등을 곧게 유지하세요.",
+      "angles": {
+        "left_knee": 86.8,
+        "right_knee": 97.2,
+        "left_hip": 110.8,
+        "right_hip": 116.0
+      },
+      "exercise": "squat"
+    }
+  },
+  "rest_squat_explicit": {
+    "request": {
+      "image": "<base64 image>",
+      "exercise": "squat"
+    },
+    "status": 200,
+    "response": {
+      "posture": "bad",
+      "feedback": "왼쪽 무릎이 발끝보다 앞으로 나갔습니다. 무릎을 발목 위로 정렬하세요. | 오른쪽 무릎이 발끝보다 앞으로 나갔습니다. 무릎을 발목 위로 정렬하세요. | 상체가 너무 숙여졌습니다. 가슴을 들고 등을 곧게 유지하세요.",
+      "angles": {
+        "left_knee": 86.8,
+        "right_knee": 97.2,
+        "left_hip": 110.8,
+        "right_hip": 116.0
+      },
+      "exercise": "squat"
+    }
+  },
+  "rest_pushup": {
+    "request": {
+      "image": "<base64 image>",
+      "exercise": "pushup"
+    },
+    "status": 200,
+    "response": {
+      "posture": "bad",
+      "feedback": "팔꿈치가 너무 벌어졌습니다. 몸통 가까이 붙이세요.",
+      "angles": {
+        "left_elbow": 55.3,
+        "right_elbow": 70.5,
+        "left_shoulder": 42.7,
+        "right_shoulder": 43.9
+      },
+      "exercise": "pushup"
+    }
+  },
+  "rest_unsupported_exercise": {
+    "request": {
+      "image": "<base64 image>",
+      "exercise": "plank"
+    },
+    "status": 400,
+    "response": {
+      "detail": "지원하지 않는 운동입니다."
+    }
+  },
+  "ws_squat": {
+    "request": {
+      "type": "frame",
+      "image": "<base64>",
+      "exercise": "squat"
+    },
+    "response": {
+      "type": "result",
+      "posture": "bad",
+      "feedback": "왼쪽 무릎이 발끝보다 앞으로 나갔습니다. 무릎을 발목 위로 정렬하세요. | 오른쪽 무릎이 발끝보다 앞으로 나갔습니다. 무릎을 발목 위로 정렬하세요. | 상체가 너무 숙여졌습니다. 가슴을 들고 등을 곧게 유지하세요.",
+      "angles": {
+        "left_knee": 86.8,
+        "right_knee": 97.2,
+        "left_hip": 110.8,
+        "right_hip": 116.0
+      },
+      "exercise": "squat"
+    }
+  },
+  "ws_pushup": {
+    "request": {
+      "type": "frame",
+      "image": "<base64>",
+      "exercise": "pushup"
+    },
+    "response": {
+      "type": "result",
+      "posture": "bad",
+      "feedback": "팔꿈치가 너무 벌어졌습니다. 몸통 가까이 붙이세요.",
+      "angles": {
+        "left_elbow": 55.3,
+        "right_elbow": 70.5,
+        "left_shoulder": 42.7,
+        "right_shoulder": 43.9
+      },
+      "exercise": "pushup"
+    }
+  },
+  "ws_unsupported_exercise": {
+    "request": {
+      "type": "frame",
+      "image": "<base64>",
+      "exercise": "plank"
+    },
+    "response": {
+      "type": "error",
+      "message": "지원하지 않는 운동입니다."
+    }
+  }
+}
