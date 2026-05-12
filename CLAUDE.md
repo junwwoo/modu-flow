@@ -501,6 +501,17 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - WS `{"type":"summary"}` 응답(`{"type":"summary","summary":{...}}`)이 위 구조를 그대로 전달 → 클라이언트(Android)는 `assessment`를 헤드라인으로, `issues_detail[].message`+`.tip`을 항목으로 그리면 됨. `live_client.py`도 종료 시 콘솔에 같은 형식으로 출력.
 - 새 운동/이슈 추가 시: `MESSAGES`에 짧은 문구 + `COACHING_TIPS`에 상세 팁을 같은 full key로 등록하면 요약이 자동으로 따라옴(매니저 코드 수정 불필요).
 
+### RepCounter 시간적 안정화 (동작 인식 안정화)
+
+프레임 1장씩 독립 분석(IMAGE 모드)이라 각도·stage가 매 프레임 출렁여서 rep 카운트/stage가 깜빡이던 문제를, `RepCounter`에 시간적 안정화를 넣어 완화했다 (`test_pose_8.py`).
+
+- **중앙값 스무딩** — 최근 `smooth_window`개(기본 5) 프레임의 평균 primary 각도 중 **중앙값**을 작업 각도로 사용. 단발 스파이크가 곧바로 제거됨(median은 평균보다 이상치에 강함).
+- **전환 디바운스** — 스무딩 각도가 임계값 너머 zone(UP/DOWN)을 가리키는 상태가 `debounce_frames`개(기본 2) 연속될 때만 stage 전환을 확정. 1~2프레임짜리 글리치 무시.
+- `(down_thr, up_thr)` 구간은 그대로 데드밴드(히스테리시스) — 그 안에서는 직전 stage 유지. `RepCounter.stage`는 여전히 `"UP"`/`"DOWN"`만 가짐(MID 없음 — 데드밴드 동안 직전 값 유지).
+- 관절 미검출(`angles`가 비거나 키 없음) 프레임은 버퍼/디바운스 상태를 건드리지 않고 현 상태 그대로 통과.
+- `smooth_window`/`debounce_frames`는 `RepCounter.__init__` 인자(기본값 보유) — `make_rep_counter`/`SquatCounter`는 기본값 사용. 클라이언트 fps가 낮아 반응이 느리면 `smooth_window`를 줄이면 됨.
+- **부작용/한계**: 스무딩+디바운스로 stage 확정이 약 0.5~1초(클라이언트 fps에 비례) 지연됨 — 한 rep 2~4초 기준 문제없음. 다만 0.5초 미만의 아주 빠른 반복은 누락될 수 있음(사실상 의도된 동작). **분석기 내부의 form-check 게이팅(DOWN일 때만 폼 검사)은 여전히 per-frame** — `RepCounter`만 안정화됨. stage 단일 권위(stateful 레이어가 form-check까지 게이팅)는 VIDEO 모드 전환 시점에 같이 정리 예정.
+
 ### 주의 사항
 
 - **콜드 스타트**: 유휴 후 첫 요청 시 컨테이너 기동 + MediaPipe 모델 로딩으로 5~15초 지연. 시연 땐 `min-instances=1` 권장

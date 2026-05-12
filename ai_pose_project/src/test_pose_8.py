@@ -8,6 +8,7 @@ import json
 import os
 import queue
 import threading
+from collections import deque
 from datetime import datetime
 from typing import Protocol
 
@@ -143,37 +144,75 @@ def judge_squat_pose(landmarks, angle_lk, angle_rk):
 # ──────────────────────────────────────────────────────────────
 # 횟수 카운터 (외부 호출자가 누적 상태 관리에 사용)
 # 11주차: 운동별 분석기에서 임계값/key를 끌어다 쓰는 일반화 구조로 전환.
+# 12주차: 프레임 단위 각도 노이즈에 대한 시간적 안정화(중앙값 스무딩 + 전환 디바운스) 추가.
 # ──────────────────────────────────────────────────────────────
 class RepCounter:
-    """운동 무관 횟수 카운터.
+    """운동 무관 횟수 카운터 + 시간적 안정화.
+
+    프레임 1장씩 독립 분석한 각도는 출렁이므로:
+      (1) 최근 `smooth_window`개 프레임의 **중앙값**으로 각도를 스무딩 (단발 스파이크 제거),
+      (2) 스무딩된 각도가 임계값 너머 zone 을 가리키는 상태가 `debounce_frames`만큼
+          연속될 때만 stage 를 전환 (짧은 글리치 무시).
+    `(down_thr, up_thr)` 구간은 그대로 데드밴드(히스테리시스)로 동작하며,
+    그 안에서는 직전 stage 를 유지한다. DOWN → UP 전이 시 count 1 증가.
 
     Args:
-        up_thr: 평균 각도 > up_thr → UP 상태
-        down_thr: 평균 각도 < down_thr → DOWN 상태
-        primary_angle_keys: 평균을 계산할 angles dict의 키 목록
-                            (예: ["left_knee", "right_knee"])
-
-    DOWN → UP 전이 시 count 1 증가.
+        up_thr:   스무딩 각도 > up_thr   → UP zone
+        down_thr: 스무딩 각도 < down_thr → DOWN zone
+        primary_angle_keys: 평균을 계산할 angles dict의 키 목록 (예: ["left_knee", "right_knee"])
+        smooth_window:   중앙값 스무딩 윈도 크기(프레임). 1이면 스무딩 없음.
+        debounce_frames: stage 전환을 확정하기 위해 필요한 연속 프레임 수.
     """
     def __init__(self, up_thr: float, down_thr: float,
-                 primary_angle_keys: list[str]):
+                 primary_angle_keys: list[str],
+                 smooth_window: int = 5, debounce_frames: int = 2):
         self.up_thr  = up_thr
         self.down_thr = down_thr
         self.keys = list(primary_angle_keys)
+        self.smooth_window   = max(1, smooth_window)
+        self.debounce_frames = max(1, debounce_frames)
         self.count = 0
         self.stage = "UP"
+        self._angle_buf: deque = deque(maxlen=self.smooth_window)
+        self._pending_zone = None   # 전환 대기 중인 zone ("UP"/"DOWN") 또는 None
+        self._pending_n    = 0      # 그 zone 이 연속된 프레임 수
 
     def update(self, angles: dict) -> tuple[int, str]:
         vals = [angles[k] for k in self.keys if k in angles]
         if not vals:
+            # 관절 미검출 프레임 — 스무딩 버퍼/디바운스 상태를 깨지 않고 현 상태 유지
             return self.count, self.stage
-        avg = sum(vals) / len(vals)
-        if avg > self.up_thr:
-            if self.stage == "DOWN":
+
+        self._angle_buf.append(sum(vals) / len(vals))
+        ordered = sorted(self._angle_buf)
+        smoothed = ordered[len(ordered) // 2]   # 중앙값 (윈도가 짧을 땐 자동으로 가벼운 스무딩)
+
+        if smoothed > self.up_thr:
+            zone = "UP"
+        elif smoothed < self.down_thr:
+            zone = "DOWN"
+        else:
+            zone = None   # 데드밴드 — 직전 stage 유지
+
+        if zone is None or zone == self.stage:
+            self._pending_zone = None
+            self._pending_n    = 0
+            return self.count, self.stage
+
+        # 현재 stage 와 다른 zone 후보 — 연속 프레임 누적
+        if zone == self._pending_zone:
+            self._pending_n += 1
+        else:
+            self._pending_zone = zone
+            self._pending_n    = 1
+
+        if self._pending_n >= self.debounce_frames:
+            if zone == "UP" and self.stage == "DOWN":
                 self.count += 1
-            self.stage = "UP"
-        elif avg < self.down_thr:
-            self.stage = "DOWN"
+            self.stage = zone
+            self._pending_zone = None
+            self._pending_n    = 0
+
         return self.count, self.stage
 
 
