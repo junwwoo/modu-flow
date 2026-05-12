@@ -1,0 +1,11 @@
+# gcloud run deploy --source 가 Cloud Build 로 업로드할 때 제외하는 목록
+.git/
+.gitignore
+venv/
+test_images/
+docs/
+data/
+src/test/
+**/__pycache__/
+*.pyc
+*.md

@@ -6,6 +6,25 @@ __pycache__/
 # MediaPipe model (large binary)
 *.task
 
+# Secrets / credentials — 절대 커밋 금지
+# GCP 서비스 계정 키, 환경변수 파일, 인증서 등
+.env
+.env.*
+*.env
+service-account*.json
+*-service-account.json
+gcp-key*.json
+*-key.json
+*_key.json
+credentials.json
+client_secret*.json
+*.pem
+*.p12
+*.pfx
+gha-creds-*.json
+.gcloud/
+.config/gcloud/
+
 # IDE
 .vscode/
 .idea/

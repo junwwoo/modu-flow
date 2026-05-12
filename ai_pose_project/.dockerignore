@@ -1,0 +1,11 @@
+venv/
+test_images/
+docs/
+data/
+src/test/
+**/__pycache__/
+*.pyc
+.git/
+.gitignore
+.gcloudignore
+Dockerfile

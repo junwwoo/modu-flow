@@ -51,7 +51,11 @@ MediaPipe PoseLandmarker를 활용한 실시간 포즈 추정 프로젝트.
 ```
 moduflow_project/
 └── ai_pose_project/
-    ├── pose_landmarker_lite.task   # MediaPipe 모델 파일
+    ├── pose_landmarker_lite.task   # MediaPipe 모델 파일 (*.task → .gitignore, 저장소 미포함)
+    ├── Dockerfile                  # 12주차: Cloud Run 배포용 이미지 (python:3.11-slim)
+    ├── requirements.txt            # 12주차: 배포 의존성 (venv 핀 버전과 일치, uvicorn[standard])
+    ├── .dockerignore               # 12주차: Docker 빌드 컨텍스트 제외 목록
+    ├── .gcloudignore               # 12주차: gcloud run deploy --source 업로드 제외 목록
     ├── venv/                       # Python 가상환경
     ├── docs/                       # 10주차: 팀 공유 자료
     │   ├── api_changes_w10.md      #   변경 요약 + REST/WS 스키마 + 팀별 액션 아이템
@@ -68,7 +72,7 @@ moduflow_project/
     │   └── lunge/                  #   라벨별 하위 폴더 (good_up/good_down/front_knee_forward/trunk_lean/unknown_front_leg)
     └── src/
         ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer
-        ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket)
+        ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket) + 12주차 WS 연결단위 세션화
         ├── feedback_messages.py    # 10주차: 한국어 피드백 메시지 dict
         ├── session_state.py        # 11주차: ExerciseSessionManager (운동별 카운터/이슈 통계 보존)
         ├── test_analyze.py         # 9주차: analyze_pose 모듈 단독 테스트
@@ -100,8 +104,9 @@ moduflow_project/
 
 - 가상환경: `ai_pose_project/venv/`
 - 모델: `pose_landmarker_lite.task` — `test_pose_8.py`에서 `__file__` 기준 절대경로로 로드하므로 어느 CWD에서 import해도 안전
-- 서버 실행: `uvicorn pose_server:app --host 0.0.0.0 --port 8000 --reload` (어느 디렉토리에서든 실행 가능)
+- 서버 실행(로컬): `uvicorn pose_server:app --host 0.0.0.0 --port 8000 --reload` (어느 디렉토리에서든 실행 가능)
 - 헬스체크: `curl http://127.0.0.1:8000/health` → `{"status":"ok"}`
+- 배포 서버(GCP Cloud Run): `https://moduflow-ai-489316272296.asia-northeast3.run.app` — 자세한 내용은 아래 "12주차: GCP Cloud Run 배포" 참고
 
 ## 8주차: 자세 분석 서버 구조
 
@@ -427,6 +432,67 @@ count, stage = counter.update(result["angles"])
 설계 결정:
 - 임계값 위치를 **분석기 클래스 속성** vs 별도 `REP_CONFIG` dict 두 안 중 전자 채택. 분석기의 stage 판정과 카운터가 같은 값을 공유하므로 임계값 변경 시 한 곳만 고치면 되어 불일치 위험 0
 - `ExerciseAnalyzer` Protocol에 `up_thr`/`down_thr`/`primary_angle_keys` 필드 추가 → 새 운동 분석기 작성 시 컨트랙트로 강제
+
+## 12주차: GCP Cloud Run 배포
+
+안드로이드 클라이언트가 다른 네트워크에서도 실시간 연동을 할 수 있도록 FastAPI 서버(`pose_server.py`)를 GCP Cloud Run에 컨테이너로 배포하였다. 서버리스는 장기 WebSocket 연결에 부적합하지만 Cloud Run은 WebSocket을 지원하면서 유휴 시 인스턴스 0대로 축소(scale-to-zero)되어 비용 부담이 거의 없어 채택.
+
+### 배포 좌표
+
+| 항목 | 값 |
+|---|---|
+| GCP 프로젝트 | `moduflow-ai-pose` (프로젝트 번호 489316272296) — 본인의 다른 프로젝트와 분리, 동일 결제 계정 |
+| 서비스 | Cloud Run `moduflow-ai`, 리전 `asia-northeast3` (서울) |
+| 공개 URL | `https://moduflow-ai-489316272296.asia-northeast3.run.app` |
+| 엔드포인트 | REST `POST /analyze` · WS `wss://.../ws` · 헬스 `/health` · Swagger `/docs` · OpenAPI `/openapi.json` |
+| 인증 | `--allow-unauthenticated` (공개) — 안드로이드가 GCP 인증 없이 접근 |
+| 스펙 | `--memory=2Gi --cpu=2 --timeout=3600 --cpu-boost`, `min-instances=0` |
+
+→ 안드로이드 측 연동 시 로컬과 달리 **`wss://` (TLS)** 로 WebSocket에 접속해야 함.
+
+### 배포 산출물 (`ai_pose_project/`)
+
+- **`Dockerfile`** — `python:3.11-slim` 기반. `libgl1`/`libglib2.0-0` apt 설치(OpenCV 런타임), `requirements.txt` 설치, `pose_landmarker_lite.task`(src의 부모 위치)와 `src/` 복사, `CMD`에서 `uvicorn pose_server:app --host 0.0.0.0 --port ${PORT} --app-dir src` (Cloud Run이 `PORT` 주입, 기본 8080)
+- **`requirements.txt`** — venv 핀 버전과 동일. `uvicorn[standard]`로 지정해 `/ws` 동작에 필요한 websockets 구현체 포함. `mediapipe`가 요구하는 `opencv-contrib-python` 사용
+- **`.dockerignore` / `.gcloudignore`** — `venv/`, `test_images/`, `docs/`, `data/`, `src/test/`, `__pycache__` 등을 빌드/업로드에서 제외
+- 모델 파일(`*.task`)은 `.gitignore`로 저장소에 없지만, `gcloud run deploy --source` 는 git이 아닌 로컬 작업 디렉토리를 업로드하므로 배포 시 포함됨. 다른 머신에서 clone 후 배포하려면 모델 파일을 별도로 받아야 함
+
+### 운영 명령
+
+```bash
+# 재배포 (서버 코드 수정 후) — ai_pose_project/ 디렉토리에서
+gcloud run deploy moduflow-ai --source . --project=moduflow-ai-pose --region=asia-northeast3 --quiet
+
+# 시연 직전: 콜드스타트 제거 (항상 1대 유지)
+gcloud run services update moduflow-ai --region=asia-northeast3 --project=moduflow-ai-pose --min-instances=1
+# 시연 후 원복
+gcloud run services update moduflow-ai --region=asia-northeast3 --project=moduflow-ai-pose --min-instances=0
+
+# 로그 확인
+gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=moduflow-ai-pose --limit=50
+```
+
+### WebSocket 세션화 — rep 카운트·이슈 통계를 서버로 이동
+
+11주차까지 `/ws`는 프레임마다 `analyze_pose` 결과만 그대로 돌려주는 **stateless** 엔드포인트였고, rep 카운팅·세션 통계는 클라이언트(`live_client.py`, Android) 책임이었다. 12주차에 클라이언트(특히 Android)의 부담을 줄이고 카운팅 로직의 단일 출처를 보장하기 위해, 이미 만들어져 있던 `ExerciseSessionManager`(`session_state.py`)를 **`/ws` 핸들러가 연결 단위로 보유**하도록 했다. REST `/analyze`는 단발 분석이라 그대로 stateless 유지.
+
+- 연결마다 `ExerciseSessionManager()` 1개 생성 → 운동별 rep 카운트·이슈 통계·rep 단위 이슈 묶음을 누적. 운동 전환 시에도 각 운동 상태 보존(squat→pushup→squat 복귀 시 카운트 이어짐). 연결 종료 시 세션도 종료(현재 세션 재개 미지원 — 끊기면 새 세션).
+- **수신 메시지 타입 추가**:
+  - `{"type": "frame", "image", "exercise"}` — 기존과 동일
+  - `{"type": "reset", "exercise"?}` — `exercise` 생략 시 세션 전체 초기화 → `{"type": "reset_ok", "exercise": <or null>}`
+  - `{"type": "summary"}` — `{"type": "summary", "summary": {...get_summary()...}}`
+- **`result` 응답 필드 확장**: 기존 `posture/feedback/angles/exercise`에 더해 `issues`(prefix 없는 이슈 키 배열), `count`(현재 rep 수), `stage`(`UP/DOWN/MID`), `rep_completed`(이 프레임에서 DOWN→UP 전이 발생 여부) 추가. 9·10주차 클라이언트는 추가 필드를 무시하면 그대로 동작 → 하위 호환.
+- 사람 미검출 등으로 `angles`가 `{}`여도 `RepCounter.update`가 빈 값을 무시하므로 안전. `exercise` 검증은 `analyze_pose`가 먼저 수행하므로 `session.update`는 추가로 던지지 않음.
+- `analyze_pose` 결과 dict가 `response_model`로 필터링되는 REST와 달리 WS는 직접 직렬화하므로 `issues`까지 그대로 전달.
+- **잔여 과제**: `LungeAnalyzer._prev_front`는 여전히 `EXERCISE_REGISTRY`의 전역 단일 인스턴스에 묶여 있어 동시 다중 연결 시 lunge 앞다리 판정이 섞일 수 있음. rep 카운트는 연결별로 격리됐지만 분석기 인스턴스 격리(분석기 팩토리)는 별도 작업으로 남김.
+
+### 주의 사항
+
+- **콜드 스타트**: 유휴 후 첫 요청 시 컨테이너 기동 + MediaPipe 모델 로딩으로 5~15초 지연. 시연 땐 `min-instances=1` 권장
+- **WebSocket 타임아웃**: Cloud Run 요청 타임아웃 최대 3600초(60분) — `--timeout=3600`으로 설정. 한 운동 세션이 60분을 넘으면 재연결 필요
+- **`LungeAnalyzer` 인스턴스 상태**: `_prev_front` 히스테리시스를 단일 인스턴스가 공유 → Cloud Run에서 동시 다중 클라이언트가 lunge를 분석하면 앞다리 판정이 섞일 수 있음 (CLAUDE.md 11주차 항목 참고, 12주차 분석기 팩토리 도입 시 정리 예정)
+- **신규 프로젝트 빌드 권한 이슈(해결됨)**: `gcloud run deploy --source` 가 기본 컴퓨트 SA(`<번호>-compute@developer.gserviceaccount.com`)로 빌드하는데 권한이 없어 `PERMISSION_DENIED` 발생 → `gcloud projects add-iam-policy-binding moduflow-ai-pose --member=serviceAccount:489316272296-compute@developer.gserviceaccount.com --role=roles/cloudbuild.builds.builder` 로 해결, 이후 유지됨
+- **비용**: 요청 처리 시간만 과금되며 유휴 시 0원에 수렴. 인스턴스 수동 중지 불필요
 
 ## Conventions
 

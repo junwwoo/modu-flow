@@ -7,10 +7,15 @@ FastAPI 자세 분석 서버
     응답 (JSON): { "posture": "good"|"bad", "feedback": str, "angles": {...},
                   "exercise": "squat"|"pushup" }
 
-  WS /ws
-    클라이언트 → 서버: { "type": "frame", "image": "<base64>", "exercise": ... }
-    서버 → 클라이언트: { "type": "result", "posture", "feedback", "angles", "exercise" }
-                     { "type": "error",  "message": "..." }
+  WS /ws  (연결 단위로 rep 카운트·이슈 통계를 서버가 누적 — analyze_pose 자체는 stateless)
+    클라이언트 → 서버: { "type": "frame",   "image": "<base64>", "exercise": ... }
+                     { "type": "reset",   "exercise": ... }   # 생략 시 세션 전체 초기화
+                     { "type": "summary" }
+    서버 → 클라이언트: { "type": "result",   "posture", "feedback", "angles", "issues",
+                                            "exercise", "count", "stage", "rep_completed" }
+                     { "type": "reset_ok", "exercise": ... }
+                     { "type": "summary",  "summary": {...} }
+                     { "type": "error",    "message": "..." }
 
 실행:
   uvicorn pose_server:app --host 0.0.0.0 --port 8000 --reload
@@ -28,7 +33,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from test_pose_8 import analyze_pose, UnsupportedExerciseError
+from test_pose_8 import analyze_pose, UnsupportedExerciseError, EXERCISE_REGISTRY
+from session_state import ExerciseSessionManager
 from feedback_messages import MESSAGES as MSG
 
 logger = logging.getLogger("pose_server")
@@ -178,13 +184,26 @@ async def ws_analyze(websocket: WebSocket):
     """
     실시간 자세 분석용 WebSocket.
 
-    수신: {"type": "frame", "image": "<base64>"}
-    송신: {"type": "result", "posture": ..., "feedback": ..., "angles": {...}}
-          {"type": "error",  "message": "..."}
+    연결마다 ExerciseSessionManager 를 하나 보유하여 운동별 rep 카운트·이슈
+    통계를 서버에서 누적한다 (analyze_pose 자체는 프레임 단위 stateless).
+    운동 전환 시에도 각 운동의 누적 상태는 보존된다. 연결이 끊기면 세션도 종료.
+
+    수신:
+      {"type": "frame",   "image": "<base64>", "exercise": "squat"}
+      {"type": "reset",   "exercise": "squat"}   # exercise 생략 시 세션 전체 초기화
+      {"type": "summary"}                          # 현재까지의 세션 요약 요청
+
+    송신:
+      {"type": "result",   "posture", "feedback", "angles", "issues",
+                           "exercise", "count", "stage", "rep_completed"}
+      {"type": "reset_ok", "exercise": <초기화한 운동명 또는 null>}
+      {"type": "summary",  "summary": { ... ExerciseSessionManager.get_summary() ... }}
+      {"type": "error",    "message": "..."}      # 개별 프레임 에러는 연결 유지
     """
     await websocket.accept()
-    client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "?"
-    logger.info("WS 연결: %s", client)
+    client  = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "?"
+    session = ExerciseSessionManager()
+    logger.info("WS 연결: %s (session=%s)", client, session.session_id)
 
     try:
         while True:
@@ -192,18 +211,29 @@ async def ws_analyze(websocket: WebSocket):
             try:
                 msg = await websocket.receive_json()
             except ValueError:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "JSON 파싱 실패",
-                })
+                await websocket.send_json({"type": "error", "message": "JSON 파싱 실패"})
                 continue
 
             msg_type = msg.get("type")
+
+            # ── 세션 초기화 ──────────────────────────────────
+            if msg_type == "reset":
+                ex = msg.get("exercise")
+                if ex is not None and ex not in EXERCISE_REGISTRY:
+                    await websocket.send_json({"type": "error", "message": MSG["unsupported_exercise"]})
+                    continue
+                session.reset(ex)
+                await websocket.send_json({"type": "reset_ok", "exercise": ex})
+                continue
+
+            # ── 세션 요약 ────────────────────────────────────
+            if msg_type == "summary":
+                await websocket.send_json({"type": "summary", "summary": session.get_summary()})
+                continue
+
+            # ── 프레임 분석 ──────────────────────────────────
             if msg_type != "frame":
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"지원하지 않는 type: {msg_type}",
-                })
+                await websocket.send_json({"type": "error", "message": f"지원하지 않는 type: {msg_type}"})
                 continue
 
             image_b64 = msg.get("image", "")
@@ -216,35 +246,35 @@ async def ws_analyze(websocket: WebSocket):
                     _process_frame_blocking, image_b64, exercise,
                 )
             except UnsupportedExerciseError:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": MSG["unsupported_exercise"],
-                })
+                await websocket.send_json({"type": "error", "message": MSG["unsupported_exercise"]})
                 continue
             except ValueError as e:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": str(e),
-                })
+                await websocket.send_json({"type": "error", "message": str(e)})
                 continue
             except Exception:
                 logger.exception("자세 분석 중 예외 (exercise=%s)", exercise)
-                await websocket.send_json({
-                    "type": "error",
-                    "message": MSG["inference_failed"],
-                })
+                await websocket.send_json({"type": "error", "message": MSG["inference_failed"]})
                 continue
 
+            # 세션 매니저에 결과 반영 → count / stage / rep_completed 부가.
+            # 사람 미검출 등으로 angles 가 비어도 RepCounter 가 그대로 무시하므로 안전.
+            # (exercise 는 analyze_pose 에서 이미 검증됨 → update 가 추가로 던지지 않음)
+            enriched = session.update(exercise, result)
+
             await websocket.send_json({
-                "type":     "result",
-                "posture":  result["posture"],
-                "feedback": result["feedback"],
-                "angles":   result["angles"],
-                "exercise": result["exercise"],
+                "type":          "result",
+                "posture":       enriched["posture"],
+                "feedback":      enriched["feedback"],
+                "angles":        enriched["angles"],
+                "issues":        enriched.get("issues", []),
+                "exercise":      enriched["exercise"],
+                "count":         enriched["count"],
+                "stage":         enriched["stage"],
+                "rep_completed": enriched["rep_completed"],
             })
 
     except WebSocketDisconnect:
-        logger.info("WS 연결 해제: %s", client)
+        logger.info("WS 연결 해제: %s — summary=%s", client, session.get_summary())
     except Exception as e:
         logger.exception("WS 처리 중 예기치 않은 예외: %s", e)
         try:

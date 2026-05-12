@@ -1,0 +1,10 @@
+# ModuFlow AI 자세 분석 서버 (FastAPI) — 배포용 의존성
+# 로컬 venv의 핀 버전과 동일하게 맞춤. 서버 전용이라 GUI(opencv-python)가 아닌
+# headless 가 아닌 contrib 빌드는 mediapipe 가 요구하므로 그대로 유지.
+fastapi==0.136.1
+uvicorn[standard]==0.46.0          # [standard] 가 websockets 구현체를 포함 → /ws 동작에 필수
+pydantic==2.13.3
+mediapipe==0.10.32
+numpy==2.2.6
+opencv-contrib-python==4.13.0.92
+pillow==12.1.1
