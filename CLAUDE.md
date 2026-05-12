@@ -73,8 +73,8 @@ moduflow_project/
     └── src/
         ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer
         ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket) + 12주차 WS 연결단위 세션화
-        ├── feedback_messages.py    # 10주차: 한국어 피드백 메시지 dict
-        ├── session_state.py        # 11주차: ExerciseSessionManager (운동별 카운터/이슈 통계 보존)
+        ├── feedback_messages.py    # 10주차 한국어 메시지 dict + 12주차 COACHING_TIPS(종료 요약용 상세 코칭)
+        ├── session_state.py        # 11주차 ExerciseSessionManager + 12주차 get_summary 상세 코칭 확장
         ├── test_analyze.py         # 9주차: analyze_pose 모듈 단독 테스트
         ├── test_client.py          # 9주차: REST + WebSocket 통합 테스트
         ├── live_client.py          # 9주차: 실시간 웹캠 → WebSocket 클라이언트
@@ -485,6 +485,21 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - 사람 미검출 등으로 `angles`가 `{}`여도 `RepCounter.update`가 빈 값을 무시하므로 안전. `exercise` 검증은 `analyze_pose`가 먼저 수행하므로 `session.update`는 추가로 던지지 않음.
 - `analyze_pose` 결과 dict가 `response_model`로 필터링되는 REST와 달리 WS는 직접 직렬화하므로 `issues`까지 그대로 전달.
 - **잔여 과제**: `LungeAnalyzer._prev_front`는 여전히 `EXERCISE_REGISTRY`의 전역 단일 인스턴스에 묶여 있어 동시 다중 연결 시 lunge 앞다리 판정이 섞일 수 있음. rep 카운트는 연결별로 격리됐지만 분석기 인스턴스 격리(분석기 팩토리)는 별도 작업으로 남김.
+
+### 피드백 2단계: 실시간(짧게) vs 세트 종료(자세히)
+
+실시간 오버레이에는 짧은 한 줄 피드백을, 세트(운동 세션) 종료 요약에는 상세 코칭을 보여주는 2단계 구조.
+
+- **`feedback_messages.MESSAGES`** (실시간용) — 모바일 오버레이에 뜨는 짧은 문구. 예: `"왼쪽 무릎이 발끝을 넘었어요"`, `"상체를 펴세요"`, `"좋은 자세예요"`. 이슈 여러 개면 `analyze_pose`가 `" | "`로 이어 붙이므로 한 문구는 짧을수록 좋다. WS `result.feedback` / REST `/analyze` 응답이 이걸 쓴다.
+- **`feedback_messages.COACHING_TIPS`** (종료 요약용) — 이슈 full key(`"<exercise>.<issue>"`) → 자세한 교정 설명(원인·교정법·주의점). `good_form`/`standby`/공통 키는 이슈가 아니므로 없음. `feedback_messages.tip(key, default="")` 헬퍼 제공.
+- **`ExerciseSessionManager.get_summary()` 확장** — 운동별 항목에 다음을 담는다(`_summarize_exercise`):
+  - `count` / `clean_reps`(이슈 없이 끝난 rep 수) / `stage` / `last_posture`
+  - `issue_counts`: `{full_key → 횟수}`
+  - `issues_detail`: `[{key, count, message(짧은 문구), tip(상세 코칭)}]` — 횟수 내림차순(동률은 키 순)
+  - `assessment`: 한 줄 평가 문구. 예: `"스쿼트 12회 완료. 자세가 안정적이었어요!"` / `"스쿼트 8회 완료 (5회 깔끔). '상체를 펴세요'가 가장 자주 보였어요. 아래 팁을 확인하세요."`
+  - `rep_records`: rep 단위 이슈 묶음(그대로 유지)
+- WS `{"type":"summary"}` 응답(`{"type":"summary","summary":{...}}`)이 위 구조를 그대로 전달 → 클라이언트(Android)는 `assessment`를 헤드라인으로, `issues_detail[].message`+`.tip`을 항목으로 그리면 됨. `live_client.py`도 종료 시 콘솔에 같은 형식으로 출력.
+- 새 운동/이슈 추가 시: `MESSAGES`에 짧은 문구 + `COACHING_TIPS`에 상세 팁을 같은 full key로 등록하면 요약이 자동으로 따라옴(매니저 코드 수정 불필요).
 
 ### 주의 사항
 

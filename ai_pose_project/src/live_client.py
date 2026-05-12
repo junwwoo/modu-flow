@@ -218,15 +218,22 @@ async def run():
         cap.release()
         cv2.destroyAllWindows()
         print(f"\n[종료] 수신 {n_recv}건 / 에러 {n_err}건")
-        # 세션 요약 출력
+        # 세션 요약 출력 (세트 종료 상세 피드백)
         summary = sm.get_summary()
+        print("\n===== 운동 요약 =====")
+        any_ex = False
         for ex in EXERCISES:
             st = summary["exercises"].get(ex)
-            if not st:
+            if not st or st["count"] == 0:
                 continue
-            top_issues = sorted(st["issue_counts"].items(),
-                                key=lambda kv: -kv[1])[:3]
-            print(f"  {ex}: count={st['count']}, top={top_issues}")
+            any_ex = True
+            print(f"\n[{ex}] {st['assessment']}")
+            for d in st["issues_detail"]:
+                print(f"  - {d['message']} ({d['count']}회)")
+                if d["tip"]:
+                    print(f"      → {d['tip']}")
+        if not any_ex:
+            print("(완료된 운동이 없습니다.)")
 
 
 if __name__ == "__main__":

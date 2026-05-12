@@ -31,6 +31,10 @@ from test_pose_8 import (
     UnsupportedExerciseError,
     make_rep_counter,
 )
+from feedback_messages import MESSAGES, COACHING_TIPS
+
+# 운동명 → 한국어 표기 (요약 문구용). 없으면 키 그대로 사용.
+_EXERCISE_LABEL_KO = {"squat": "스쿼트", "pushup": "푸시업", "lunge": "런지"}
 
 
 @dataclass
@@ -129,20 +133,63 @@ class ExerciseSessionManager:
         return self._states.get(exercise)
 
     def get_summary(self) -> dict:
-        """세션 전체 요약. JSON 직렬화 가능한 dict."""
+        """세션 전체 요약. JSON 직렬화 가능한 dict.
+
+        실시간 result 의 짧은 feedback 과 달리, 여기서는 세트 종료 시 보여줄
+        **상세 코칭**을 함께 담는다. 운동별로:
+          - count / clean_reps / stage / last_posture
+          - issue_counts: {full_key → 횟수}
+          - issues_detail: [{key, count, message(짧은 문구), tip(상세 코칭)}], 횟수 내림차순
+          - assessment: 한 줄 평가 문구 (예: "스쿼트 12회 완료 — 자세가 안정적이었어요!")
+          - rep_records: rep 단위 이슈 묶음 (그대로 유지)
+        """
         return {
             "session_id": self.session_id,
             "start_time": self.start_time.isoformat(),
             "exercises": {
-                ex: {
-                    "count":        st.counter.count,
-                    "stage":        st.counter.stage,
-                    "issue_counts": dict(st.issue_counts),
-                    "rep_records":  list(st.rep_records),
-                    "last_posture": st.last_posture,
-                }
+                ex: self._summarize_exercise(ex, st)
                 for ex, st in self._states.items()
             },
+        }
+
+    def _summarize_exercise(self, exercise: str, st: ExerciseState) -> dict:
+        total = st.counter.count
+        clean_reps = sum(1 for r in st.rep_records if not r["issues"])
+
+        # 이슈 빈도 내림차순 + 상세 코칭 팁
+        issues_detail = [
+            {
+                "key":     full_key,
+                "count":   cnt,
+                "message": MESSAGES.get(full_key, full_key),
+                "tip":     COACHING_TIPS.get(full_key, ""),
+            }
+            for full_key, cnt in sorted(
+                st.issue_counts.items(), key=lambda kv: (-kv[1], kv[0])
+            )
+        ]
+
+        label = _EXERCISE_LABEL_KO.get(exercise, exercise)
+        if total == 0:
+            assessment = f"{label}: 완료된 반복이 없어요. 다시 시도해 보세요."
+        elif not issues_detail:
+            assessment = f"{label} {total}회 완료. 자세가 안정적이었어요!"
+        else:
+            top_msg = issues_detail[0]["message"]
+            assessment = (
+                f"{label} {total}회 완료 ({clean_reps}회 깔끔). "
+                f"'{top_msg}'가 가장 자주 보였어요. 아래 팁을 확인하세요."
+            )
+
+        return {
+            "count":         total,
+            "clean_reps":    clean_reps,
+            "stage":         st.counter.stage,
+            "last_posture":  st.last_posture,
+            "issue_counts":  dict(st.issue_counts),
+            "issues_detail": issues_detail,
+            "assessment":    assessment,
+            "rep_records":   list(st.rep_records),
         }
 
     def reset(self, exercise: Optional[str] = None) -> None:
