@@ -7,7 +7,7 @@ FastAPI 자세 분석 서버
     응답 (JSON): { "posture": "good"|"bad", "feedback": str, "angles": {...},
                   "exercise": "squat"|"pushup" }
 
-  WS /ws  (연결 단위로 rep 카운트·이슈 통계를 서버가 누적 — analyze_pose 자체는 stateless)
+  WS /ws  (연결 단위: VIDEO 모드 랜드마커 LivePoseSession + rep 카운트·이슈 통계 누적)
     클라이언트 → 서버: { "type": "frame",   "image": "<base64>", "exercise": ... }
                      { "type": "reset",   "exercise": ... }   # 생략 시 세션 전체 초기화
                      { "type": "summary" }
@@ -33,7 +33,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from test_pose_8 import analyze_pose, UnsupportedExerciseError, EXERCISE_REGISTRY
+from test_pose_8 import (
+    analyze_pose,
+    LivePoseSession,
+    UnsupportedExerciseError,
+    EXERCISE_REGISTRY,
+)
 from session_state import ExerciseSessionManager
 from feedback_messages import MESSAGES as MSG
 
@@ -170,10 +175,10 @@ def _decode_image_safe(image_b64: str) -> np.ndarray:
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 
-def _process_frame_blocking(image_b64: str, exercise: str) -> dict:
-    """디코딩 + 자세 분석 (CPU bound). 별도 스레드에서 실행됨."""
+def _process_frame_blocking(live: LivePoseSession, image_b64: str, exercise: str) -> dict:
+    """디코딩 + (연결별 VIDEO 모드) 자세 분석 (CPU bound). 별도 스레드에서 실행됨."""
     image = _decode_image_safe(image_b64)
-    return analyze_pose(image, exercise=exercise)
+    return live.analyze(image, exercise=exercise)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -184,8 +189,10 @@ async def ws_analyze(websocket: WebSocket):
     """
     실시간 자세 분석용 WebSocket.
 
-    연결마다 ExerciseSessionManager 를 하나 보유하여 운동별 rep 카운트·이슈
-    통계를 서버에서 누적한다 (analyze_pose 자체는 프레임 단위 stateless).
+    연결마다:
+      - LivePoseSession (VIDEO 모드 랜드마커 + 연결별 분석기 인스턴스) — 프레임 간
+        트래킹/스무딩으로 랜드마크 안정화. 종료 시 close().
+      - ExerciseSessionManager — 운동별 rep 카운트·이슈 통계 누적.
     운동 전환 시에도 각 운동의 누적 상태는 보존된다. 연결이 끊기면 세션도 종료.
 
     수신:
@@ -203,6 +210,15 @@ async def ws_analyze(websocket: WebSocket):
     await websocket.accept()
     client  = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "?"
     session = ExerciseSessionManager()
+    try:
+        live = LivePoseSession()
+    except Exception:
+        logger.exception("LivePoseSession 생성 실패")
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+        return
     logger.info("WS 연결: %s (session=%s)", client, session.session_id)
 
     try:
@@ -243,7 +259,7 @@ async def ws_analyze(websocket: WebSocket):
             # 이벤트 루프가 다른 연결을 처리할 수 있게 한다.
             try:
                 result = await asyncio.to_thread(
-                    _process_frame_blocking, image_b64, exercise,
+                    _process_frame_blocking, live, image_b64, exercise,
                 )
             except UnsupportedExerciseError:
                 await websocket.send_json({"type": "error", "message": MSG["unsupported_exercise"]})
@@ -281,3 +297,5 @@ async def ws_analyze(websocket: WebSocket):
             await websocket.close(code=1011)
         except Exception:
             pass
+    finally:
+        live.close()

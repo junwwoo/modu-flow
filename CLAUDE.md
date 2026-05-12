@@ -71,8 +71,8 @@ moduflow_project/
     │   ├── pushup/                 #   라벨별 하위 폴더 (good_up/good_down/hip_sag/hip_pike/camera_angle)
     │   └── lunge/                  #   라벨별 하위 폴더 (good_up/good_down/front_knee_forward/trunk_lean/unknown_front_leg)
     └── src/
-        ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer
-        ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket) + 12주차 WS 연결단위 세션화
+        ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer + 12주차 RepCounter 안정화/LivePoseSession(VIDEO)
+        ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket) + 12주차 WS 연결단위 세션화(LivePoseSession + ExerciseSessionManager)
         ├── feedback_messages.py    # 10주차 한국어 메시지 dict + 12주차 COACHING_TIPS(종료 요약용 상세 코칭)
         ├── session_state.py        # 11주차 ExerciseSessionManager + 12주차 get_summary 상세 코칭 확장
         ├── test_analyze.py         # 9주차: analyze_pose 모듈 단독 테스트
@@ -398,7 +398,7 @@ summary = sm.get_summary()  # 세션 전체를 JSON 직렬화 가능한 dict로
 
 **메시지 카탈로그 (`feedback_messages.MESSAGES`)는 차기 분석기 확장 대비 5개 예약 키 포함**: `lunge.front_knee_inward` (무릎 valgus), `lunge.back_knee_high` (깊이 부족), `lunge.hip_drop` (골반 비대칭), `lunge.front_foot_lift` (앞발 뒤꿈치 들림), `lunge.knee_asymmetry` (양쪽 깊이 차). 분석기가 emit하기 시작하면 즉시 한국어 피드백이 노출되도록 사전 등록.
 
-**stateless 원칙의 예외**: `LungeAnalyzer`는 `_prev_front` 인스턴스 상태(히스테리시스)를 보유한다. `EXERCISE_REGISTRY`의 단일 인스턴스 공유는 단일 세션 가정. WebSocket 다중 클라이언트 환경에서는 클라이언트별 인스턴스 또는 세션 시작 시 `reset()` 호출이 필요. 이 제약은 12주차에 분석기 팩토리 도입 시점에 정리 예정.
+**stateless 원칙의 예외**: `LungeAnalyzer`는 `_prev_front` 인스턴스 상태(히스테리시스)를 보유한다. `EXERCISE_REGISTRY`의 단일 인스턴스 공유는 단일 세션 가정. → 12주차에 `LivePoseSession`이 WebSocket 연결별로 분석기 인스턴스를 새로 생성하도록 하여 다중 클라이언트 문제 해소(아래 "실시간 안정화: VIDEO 모드" 참고). REST/테스트 경로는 단발 호출이라 전역 인스턴스 공유로 충분.
 
 ### RepCounter 일반화 (운동 무관 횟수 카운터)
 
@@ -510,13 +510,23 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - `(down_thr, up_thr)` 구간은 그대로 데드밴드(히스테리시스) — 그 안에서는 직전 stage 유지. `RepCounter.stage`는 여전히 `"UP"`/`"DOWN"`만 가짐(MID 없음 — 데드밴드 동안 직전 값 유지).
 - 관절 미검출(`angles`가 비거나 키 없음) 프레임은 버퍼/디바운스 상태를 건드리지 않고 현 상태 그대로 통과.
 - `smooth_window`/`debounce_frames`는 `RepCounter.__init__` 인자(기본값 보유) — `make_rep_counter`/`SquatCounter`는 기본값 사용. 클라이언트 fps가 낮아 반응이 느리면 `smooth_window`를 줄이면 됨.
-- **부작용/한계**: 스무딩+디바운스로 stage 확정이 약 0.5~1초(클라이언트 fps에 비례) 지연됨 — 한 rep 2~4초 기준 문제없음. 다만 0.5초 미만의 아주 빠른 반복은 누락될 수 있음(사실상 의도된 동작). **분석기 내부의 form-check 게이팅(DOWN일 때만 폼 검사)은 여전히 per-frame** — `RepCounter`만 안정화됨. stage 단일 권위(stateful 레이어가 form-check까지 게이팅)는 VIDEO 모드 전환 시점에 같이 정리 예정.
+- **부작용/한계**: 스무딩+디바운스로 stage 확정이 약 0.5~1초(클라이언트 fps에 비례) 지연됨 — 한 rep 2~4초 기준 문제없음. 다만 0.5초 미만의 아주 빠른 반복은 누락될 수 있음(사실상 의도된 동작). 분석기 내부 form-check 게이팅(DOWN일 때만 폼 검사)은 여전히 per-frame이지만, 아래 VIDEO 모드 도입으로 입력 랜드마크 자체가 안정화되어 그 영향은 크게 줄었다.
+
+### 실시간 안정화: VIDEO 모드 + 연결별 분석기 (LivePoseSession)
+
+`analyze_pose`(IMAGE 모드)는 프레임을 독립 처리해 랜드마크가 출렁이지만, MediaPipe VIDEO 모드는 프레임 간 트래킹/스무딩을 수행해 훨씬 안정적이다. VIDEO 모드 랜드마커는 **하나의 스트림**(타임스탬프 단조 증가 + 내부 트래킹 상태)을 가정하므로 여러 WebSocket 연결을 한 인스턴스로 처리하면 안 된다 → `test_pose_8.py`에 **`LivePoseSession`** 클래스를 두고 **WebSocket 연결마다 하나** 생성한다.
+
+- `LivePoseSession`이 보유: ① VIDEO 모드 `PoseLandmarker`(연결 시작 시 생성, 종료 시 `close()`), ② **연결별 분석기 인스턴스** `{name: type(a)() for ... EXERCISE_REGISTRY}` — `LungeAnalyzer._prev_front` 등 인스턴스 상태가 연결 간에 섞이지 않음(전역 레지스트리 공유 문제 해소).
+- `LivePoseSession.analyze(image, exercise)` — schema는 `analyze_pose`와 동일. 타임스탬프는 프레임 도착 시각(`time.monotonic()*1000`)을 쓰되 직전보다 작거나 같으면 +1 보정해 단조 증가 보장. `detect_for_video(mp_image, ts)` 사용.
+- `analyze_pose`와 `LivePoseSession`은 `_result_from_detection(detection_result, exercise, analyzer)` 헬퍼를 공유 — 감지 결과+분석기 → 표준 dict (사람 미검출 시 `person_not_detected`).
+- **분담**: REST `/analyze`·테스트 스크립트(`test_dataset.py`/`test_analyze.py`)는 단발이라 `analyze_pose`(IMAGE, 모듈 전역 `_landmarker`) 그대로 사용. 실시간 `/ws`만 연결별 `LivePoseSession` 사용. `pose_server.py`의 `/ws` 핸들러는 연결마다 `LivePoseSession` + `ExerciseSessionManager` 둘 다 생성하고, `finally`에서 `live.close()`.
+- **비용/한계**: 연결마다 랜드마커 인스턴스가 생기므로 메모리가 연결 수에 비례(lite 모델이라 인스턴스당 수십~백 MB 수준; 2GB Cloud Run에서 동시 소수 연결은 문제없음, 대규모 동시접속은 별도 검토 필요). 한 연결 안에서 프레임은 직렬 처리되므로 인스턴스 동시 호출은 없음.
 
 ### 주의 사항
 
 - **콜드 스타트**: 유휴 후 첫 요청 시 컨테이너 기동 + MediaPipe 모델 로딩으로 5~15초 지연. 시연 땐 `min-instances=1` 권장
 - **WebSocket 타임아웃**: Cloud Run 요청 타임아웃 최대 3600초(60분) — `--timeout=3600`으로 설정. 한 운동 세션이 60분을 넘으면 재연결 필요
-- **`LungeAnalyzer` 인스턴스 상태**: `_prev_front` 히스테리시스를 단일 인스턴스가 공유 → Cloud Run에서 동시 다중 클라이언트가 lunge를 분석하면 앞다리 판정이 섞일 수 있음 (CLAUDE.md 11주차 항목 참고, 12주차 분석기 팩토리 도입 시 정리 예정)
+- **`LungeAnalyzer` 인스턴스 상태**: `_prev_front` 히스테리시스는 인스턴스 상태 → `/ws`에서는 `LivePoseSession`이 연결별 분석기 인스턴스를 갖게 되어 해소됨. 단 REST `/analyze`·테스트는 전역 `EXERCISE_REGISTRY` 인스턴스를 공유하므로(단발 호출이라 실질 영향 없음) 이 점만 유의.
 - **신규 프로젝트 빌드 권한 이슈(해결됨)**: `gcloud run deploy --source` 가 기본 컴퓨트 SA(`<번호>-compute@developer.gserviceaccount.com`)로 빌드하는데 권한이 없어 `PERMISSION_DENIED` 발생 → `gcloud projects add-iam-policy-binding moduflow-ai-pose --member=serviceAccount:489316272296-compute@developer.gserviceaccount.com --role=roles/cloudbuild.builds.builder` 로 해결, 이후 유지됨
 - **비용**: 요청 처리 시간만 과금되며 유휴 시 0원에 수렴. 인스턴스 수동 중지 불필요
 

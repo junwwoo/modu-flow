@@ -873,9 +873,29 @@ EXERCISE_REGISTRY: dict[str, ExerciseAnalyzer] = {
 # ──────────────────────────────────────────────────────────────
 # [8주차 핵심 / 10주차 확장] 단일 프레임 자세 분석 함수
 # ──────────────────────────────────────────────────────────────
+def _result_from_detection(detection_result, exercise: str, analyzer) -> dict:
+    """MediaPipe 감지 결과 + 분석기 → 표준 결과 dict.
+
+    analyze_pose(IMAGE 모드)와 LivePoseSession(VIDEO 모드)이 공유한다.
+    """
+    if not detection_result.pose_landmarks:
+        return {
+            "posture":  "bad",
+            "feedback": MSG["person_not_detected"],
+            "angles":   {},
+            "issues":   [],
+            "exercise": exercise,
+        }
+    out = analyzer.analyze(detection_result.pose_landmarks[0])
+    out["exercise"] = exercise
+    return out
+
+
 def analyze_pose(image, exercise: str = "squat"):
     """
     BGR numpy 이미지 한 장을 입력받아 자세 분석 결과를 dict로 반환한다.
+    **단발 프레임용** (IMAGE 모드, 모듈 전역 `_landmarker` 재사용, stateless).
+    REST `/analyze`·테스트 스크립트가 사용. 실시간 스트림은 `LivePoseSession` 참고.
 
     Args:
         image (np.ndarray): OpenCV BGR 이미지 (H x W x 3)
@@ -883,12 +903,8 @@ def analyze_pose(image, exercise: str = "squat"):
                         기본값 "squat" (9주차 클라이언트 하위 호환).
 
     Returns:
-        dict: {
-            "posture":  "good" | "bad",
-            "feedback": 한국어 피드백 메시지,
-            "angles":   { 운동별 각도 dict },
-            "exercise": 분석에 사용한 운동명
-        }
+        dict: { "posture": "good"|"bad", "feedback": str, "angles": {...},
+                "issues": list[str], "exercise": str }
 
     Raises:
         UnsupportedExerciseError: `exercise`가 EXERCISE_REGISTRY에 없을 때
@@ -899,17 +915,57 @@ def analyze_pose(image, exercise: str = "squat"):
     rgb_frame = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     mp_image  = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
     result    = _landmarker.detect(mp_image)
+    return _result_from_detection(result, exercise, EXERCISE_REGISTRY[exercise])
 
-    if not result.pose_landmarks:
-        return {
-            "posture":  "bad",
-            "feedback": MSG["person_not_detected"],
-            "angles":   {},
-            "issues":   [],
-            "exercise": exercise,
-        }
 
-    landmarks = result.pose_landmarks[0]
-    out = EXERCISE_REGISTRY[exercise].analyze(landmarks)
-    out["exercise"] = exercise
-    return out
+# ──────────────────────────────────────────────────────────────
+# [12주차] 실시간 스트림용 세션 — VIDEO 모드 랜드마커 + 연결별 분석기 인스턴스
+# ──────────────────────────────────────────────────────────────
+class LivePoseSession:
+    """WebSocket 연결 1개 = 영상 스트림 1개에 대응하는 분석 세션.
+
+    IMAGE 모드(`analyze_pose`)는 프레임을 독립 처리해 랜드마크가 출렁이지만,
+    VIDEO 모드는 프레임 간 트래킹/스무딩을 수행해 훨씬 안정적이다. 단 VIDEO 모드
+    랜드마커는 **하나의 스트림**을 가정하므로(타임스탬프 단조 증가 + 내부 트래킹 상태),
+    여러 WebSocket 연결을 한 인스턴스로 처리하면 안 된다 → **연결마다 하나** 생성한다.
+
+    덤으로 분석기 인스턴스도 연결별로 갖는다 → `LungeAnalyzer._prev_front` 같은
+    인스턴스 상태가 연결 간에 섞이지 않는다(전역 `EXERCISE_REGISTRY` 공유 문제 해소).
+
+    수명: 연결 시작 시 생성, 연결 종료 시 반드시 `close()` 호출(랜드마커 해제).
+    프레임은 연결 내에서 직렬 처리되므로 한 인스턴스에 동시 호출은 없다.
+    """
+    def __init__(self):
+        self._landmarker = PoseLandmarker.create_from_options(
+            PoseLandmarkerOptions(
+                base_options=BaseOptions(model_asset_path=model_path),
+                running_mode=VisionRunningMode.VIDEO,
+            )
+        )
+        # 연결별 분석기 인스턴스 (전역 레지스트리의 클래스로부터 새로 생성)
+        self._analyzers = {name: type(a)() for name, a in EXERCISE_REGISTRY.items()}
+        self._last_ts_ms = -1
+
+    def analyze(self, image, exercise: str = "squat") -> dict:
+        """BGR 이미지 한 프레임을 VIDEO 모드로 분석. 반환 schema는 analyze_pose와 동일.
+
+        타임스탬프는 프레임 도착 시각(monotonic, ms)을 쓰되 단조 증가를 보장한다.
+        """
+        if exercise not in self._analyzers:
+            raise UnsupportedExerciseError(exercise)
+
+        ts = int(time.monotonic() * 1000)
+        if ts <= self._last_ts_ms:
+            ts = self._last_ts_ms + 1
+        self._last_ts_ms = ts
+
+        rgb_frame = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mp_image  = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        result    = self._landmarker.detect_for_video(mp_image, ts)
+        return _result_from_detection(result, exercise, self._analyzers[exercise])
+
+    def close(self) -> None:
+        try:
+            self._landmarker.close()
+        except Exception:
+            pass
