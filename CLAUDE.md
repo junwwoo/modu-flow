@@ -522,6 +522,16 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - **분담**: REST `/analyze`·테스트 스크립트(`test_dataset.py`/`test_analyze.py`)는 단발이라 `analyze_pose`(IMAGE, 모듈 전역 `_landmarker`) 그대로 사용. 실시간 `/ws`만 연결별 `LivePoseSession` 사용. `pose_server.py`의 `/ws` 핸들러는 연결마다 `LivePoseSession` + `ExerciseSessionManager` 둘 다 생성하고, `finally`에서 `live.close()`.
 - **비용/한계**: 연결마다 랜드마커 인스턴스가 생기므로 메모리가 연결 수에 비례(lite 모델이라 인스턴스당 수십~백 MB 수준; 2GB Cloud Run에서 동시 소수 연결은 문제없음, 대규모 동시접속은 별도 검토 필요). 한 연결 안에서 프레임은 직렬 처리되므로 인스턴스 동시 호출은 없음.
 
+### visibility 게이팅 (가려진 관절 → 잘못된 피드백 방지)
+
+관절이 화면 밖으로 잘리면 MediaPipe 가 좌표를 외삽한 쓰레기값을 주고 visibility 가 거의 0으로 떨어진다 → 그 상태로 각도를 계산하면 엉뚱한 폼 피드백("무릎이 발끝을 넘었어요" 등)이 나간다. 그래서 핵심 관절이 충분히 보일 때만 분석한다 (`test_pose_8.py`).
+
+- 각 분석기에 **`required_joint_pairs: list[(left_idx, right_idx)]`** — 그 운동의 각도·폼 검사에 들어가는 관절들(좌·우 쌍). squat/lunge: 어깨·엉덩이·무릎·발목. pushup: 어깨·팔꿈치·손목·엉덩이·발목.
+- `_has_sufficient_visibility(landmarks, analyzer)` — 각 쌍에 대해 **둘 중 더 잘 보이는 쪽**의 `visibility`가 `MIN_LANDMARK_VISIBILITY`(0.5) 이상이어야 통과. 측면 촬영에서 몸에 가려진 반대편 관절은 MediaPipe 가 ~0.2~0.6 으로 추정해 유지하므로 "쌍 중 max" 판정이면 측면 촬영을 오탐하지 않고 "양쪽 다 화면 밖"인 경우만 걸린다.
+- 게이트 걸리면 `_result_from_detection`이 `{"posture":"bad", "feedback":MSG["low_visibility"]("전신이 화면에 보이게 해주세요"), "angles":{}, "issues":[], "exercise":...}` 반환 → 폼 검사·rep 카운트 모두 스킵(`angles {}` → `RepCounter`가 자동 무시), 이슈 통계에도 안 잡힘(form fault 가 아님). 응답 스키마는 그대로라 클라이언트 변경 불필요(`person_not_detected`와 동일하게 `feedback`만 표시).
+- `analyze_pose`(IMAGE)·`LivePoseSession`(VIDEO) 둘 다 `_result_from_detection`을 쓰므로 REST·테스트·실시간 모두 동일하게 게이팅됨. 기존 테스트 이미지(전신 풀샷)는 게이트에 안 걸려 `test_dataset.py` 회귀 없음.
+- 임계값/관절 쌍은 튜닝 가능: 너무 자주 "전신이 보이게…"가 뜨면 `MIN_LANDMARK_VISIBILITY`를 낮추거나(예: 0.3) 특정 쌍을 `required_joint_pairs`에서 빼면 됨.
+
 ### 주의 사항
 
 - **콜드 스타트**: 유휴 후 첫 요청 시 컨테이너 기동 + MediaPipe 모델 로딩으로 5~15초 지연. 시연 땐 `min-instances=1` 권장

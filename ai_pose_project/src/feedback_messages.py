@@ -43,6 +43,7 @@ MESSAGES = {
 
     # ───── 공통 ─────
     "person_not_detected":  "사람이 보이지 않아요",
+    "low_visibility":       "전신이 화면에 보이게 해주세요",
     "inference_failed":     "자세 분석에 실패했어요. 잠시 후 다시 시도하세요",
     "unsupported_exercise": "지원하지 않는 운동이에요",
 }

@@ -76,6 +76,12 @@ JOINT_NAMES = {
     RIGHT_ANKLE:    "right_ankle",
 }
 
+# 랜드마크 신뢰도(visibility) 게이팅 임계값.
+# 관절이 화면 밖으로 잘리면 visibility 가 거의 0으로 떨어진다(좌표는 외삽한 쓰레기값).
+# 측면 촬영에서 몸에 가려진 반대편 관절은 MediaPipe 가 그럭저럭 추정해 ~0.2~0.6 유지하므로,
+# "좌·우 쌍 중 더 높은 쪽"으로 판정하면 측면 촬영을 오탐하지 않고 "화면 밖" 케이스만 잡힌다.
+MIN_LANDMARK_VISIBILITY = 0.5
+
 # ──────────────────────────────────────────────────────────────
 # 스쿼트 폼 검사 임계값 (stage 임계값은 SquatAnalyzer 클래스 속성으로 이전)
 # ──────────────────────────────────────────────────────────────
@@ -563,11 +569,14 @@ class ExerciseAnalyzer(Protocol):
 
     11주차: stage 판정 임계값과 카운터용 key를 클래스 속성으로 노출하여
     `RepCounter`/`make_rep_counter`가 단일 출처를 참조하도록 한다.
+    12주차: `required_joint_pairs` — visibility 게이팅에 쓰는 (좌, 우) 관절 인덱스 쌍 목록.
+    이 운동의 각도·폼 검사에 들어가는 관절들. 쌍 중 하나라도 양쪽 다 안 보이면 분석을 건너뛴다.
     """
     name: str
     up_thr: float
     down_thr: float
     primary_angle_keys: list[str]
+    required_joint_pairs: list[tuple[int, int]]
     def analyze(self, landmarks) -> dict: ...
 
 
@@ -579,6 +588,13 @@ class SquatAnalyzer:
     up_thr             = 160
     down_thr           = 120
     primary_angle_keys = ["left_knee", "right_knee"]
+    # 무릎/엉덩이 각도 + knee-over-toe + trunk_lean 에 쓰이는 관절들
+    required_joint_pairs = [
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        (LEFT_HIP,      RIGHT_HIP),
+        (LEFT_KNEE,     RIGHT_KNEE),
+        (LEFT_ANKLE,    RIGHT_ANKLE),
+    ]
 
     def analyze(self, landmarks) -> dict:
         def xy(idx):
@@ -648,6 +664,14 @@ class PushupAnalyzer:
     up_thr             = 160
     down_thr           = 100
     primary_angle_keys = ["left_elbow", "right_elbow"]
+    # 팔꿈치/어깨 각도 + hip_sag/hip_pike(어깨-엉덩이-발목 Y) + camera_angle 에 쓰이는 관절들
+    required_joint_pairs = [
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        (LEFT_ELBOW,    RIGHT_ELBOW),
+        (LEFT_WRIST,    RIGHT_WRIST),
+        (LEFT_HIP,      RIGHT_HIP),
+        (LEFT_ANKLE,    RIGHT_ANKLE),
+    ]
 
     def analyze(self, landmarks) -> dict:
         def xy(idx):
@@ -757,6 +781,13 @@ class LungeAnalyzer:
     up_thr             = 160
     down_thr           = 120
     primary_angle_keys = ["left_knee", "right_knee"]
+    # 무릎/엉덩이 각도 + 앞다리 식별(ankle.z) + trunk_lean 에 쓰이는 관절들
+    required_joint_pairs = [
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        (LEFT_HIP,      RIGHT_HIP),
+        (LEFT_KNEE,     RIGHT_KNEE),
+        (LEFT_ANKLE,    RIGHT_ANKLE),
+    ]
 
     def __init__(self):
         self._prev_front: str | None = None  # "left" | "right" | None
@@ -873,10 +904,25 @@ EXERCISE_REGISTRY: dict[str, ExerciseAnalyzer] = {
 # ──────────────────────────────────────────────────────────────
 # [8주차 핵심 / 10주차 확장] 단일 프레임 자세 분석 함수
 # ──────────────────────────────────────────────────────────────
+def _has_sufficient_visibility(landmarks, analyzer) -> bool:
+    """분석기가 요구하는 관절 쌍이 충분히 보이는지 검사.
+
+    좌·우 쌍 단위로, 둘 중 더 잘 보이는 쪽의 visibility 가 임계값 이상이면 OK.
+    (측면 촬영의 가려진 반대편 관절을 오탐하지 않으면서 "화면 밖" 케이스만 걸러낸다.)
+    """
+    for left_idx, right_idx in getattr(analyzer, "required_joint_pairs", ()):
+        v_left  = landmarks[left_idx].visibility  or 0.0
+        v_right = landmarks[right_idx].visibility or 0.0
+        if max(v_left, v_right) < MIN_LANDMARK_VISIBILITY:
+            return False
+    return True
+
+
 def _result_from_detection(detection_result, exercise: str, analyzer) -> dict:
     """MediaPipe 감지 결과 + 분석기 → 표준 결과 dict.
 
     analyze_pose(IMAGE 모드)와 LivePoseSession(VIDEO 모드)이 공유한다.
+    사람 미검출 / 핵심 관절 가려짐(화면 밖) 시에는 폼 검사·각도 없이 안내 메시지를 돌려준다.
     """
     if not detection_result.pose_landmarks:
         return {
@@ -886,7 +932,19 @@ def _result_from_detection(detection_result, exercise: str, analyzer) -> dict:
             "issues":   [],
             "exercise": exercise,
         }
-    out = analyzer.analyze(detection_result.pose_landmarks[0])
+
+    landmarks = detection_result.pose_landmarks[0]
+    if not _has_sufficient_visibility(landmarks, analyzer):
+        # 각도가 신뢰 불가 → 폼 검사·rep 카운트 모두 스킵 (angles {} → RepCounter 가 무시)
+        return {
+            "posture":  "bad",
+            "feedback": MSG["low_visibility"],
+            "angles":   {},
+            "issues":   [],
+            "exercise": exercise,
+        }
+
+    out = analyzer.analyze(landmarks)
     out["exercise"] = exercise
     return out
 
