@@ -150,84 +150,83 @@ def judge_squat_pose(landmarks, angle_lk, angle_rk):
 # ──────────────────────────────────────────────────────────────
 # 횟수 카운터 (외부 호출자가 누적 상태 관리에 사용)
 # 11주차: 운동별 분석기에서 임계값/key를 끌어다 쓰는 일반화 구조로 전환.
-# 12주차: 프레임 단위 각도 노이즈에 대한 시간적 안정화(중앙값 스무딩 + 전환 디바운스) 추가.
+# 12주차: 중앙값 스무딩 + 전환 디바운스 → 골짜기(valley) 검출 방식으로 전환.
 # ──────────────────────────────────────────────────────────────
 class RepCounter:
-    """운동 무관 횟수 카운터 + 시간적 안정화.
+    """운동 무관 횟수 카운터 — 골짜기(valley) 검출 + 시간적 안정화.
 
-    프레임 1장씩 독립 분석한 각도는 출렁이므로:
-      (1) 최근 `smooth_window`개 프레임의 **중앙값**으로 각도를 스무딩 (단발 스파이크 제거),
-      (2) 스무딩된 각도가 임계값 너머 zone 을 가리키는 상태가 `debounce_frames`만큼
-          연속될 때만 stage 를 전환 (짧은 글리치 무시).
-    `(down_thr, up_thr)` 구간은 그대로 데드밴드(히스테리시스)로 동작하며,
-    그 안에서는 직전 stage 를 유지한다. DOWN → UP 전이 시 count 1 증가.
+    고정 임계값(예: 무릎 각도 < 120°)으로 DOWN/UP 을 판정하면 얕은 동작이나
+    "선 자세"가 살짝 굽은 사람의 rep 을 못 센다. 대신 **상대적 동작**으로 판정한다:
+      - UP 상태: 최근 최대각(peak)을 추적. 스무딩 각도가 peak 보다 `drop_deg` 이상
+        내려가면(= 분명히 하강 중) → DOWN 으로 전환하고 valley 추적 시작.
+      - DOWN 상태: 최근 최소각(valley)을 추적. 스무딩 각도가 valley 보다 `rise_deg`
+        이상 올라가면(= 분명히 복귀) → UP 으로 전환하며 count += 1 (골짜기 하나 완성 = 1 rep).
+    노이즈 대응: (1) 최근 `smooth_window`개 프레임의 **중앙값**으로 각도를 스무딩,
+    (2) 전환 조건이 `debounce_frames`만큼 연속될 때만 확정. 작은 흔들림(< drop/rise)은
+    카운트되지 않으며, 사람마다 ROM·"선 자세" 각도가 달라도 자동 적응한다.
 
     Args:
-        up_thr:   스무딩 각도 > up_thr   → UP zone
-        down_thr: 스무딩 각도 < down_thr → DOWN zone
         primary_angle_keys: 평균을 계산할 angles dict의 키 목록 (예: ["left_knee", "right_knee"])
+        drop_deg / rise_deg: 하강/복귀로 인정하는 최소 각도 변화(도). 작을수록 얕은 동작도 카운트.
         smooth_window:   중앙값 스무딩 윈도 크기(프레임). 1이면 스무딩 없음.
-        debounce_frames: stage 전환을 확정하기 위해 필요한 연속 프레임 수.
+        debounce_frames: 전환을 확정하기 위해 필요한 연속 프레임 수.
     """
-    def __init__(self, up_thr: float, down_thr: float,
-                 primary_angle_keys: list[str],
+    def __init__(self, primary_angle_keys: list[str],
+                 drop_deg: float = 25.0, rise_deg: float = 25.0,
                  smooth_window: int = 5, debounce_frames: int = 2):
-        self.up_thr  = up_thr
-        self.down_thr = down_thr
         self.keys = list(primary_angle_keys)
+        self.drop_deg = drop_deg
+        self.rise_deg = rise_deg
         self.smooth_window   = max(1, smooth_window)
         self.debounce_frames = max(1, debounce_frames)
         self.count = 0
         self.stage = "UP"
         self._angle_buf: deque = deque(maxlen=self.smooth_window)
-        self._pending_zone = None   # 전환 대기 중인 zone ("UP"/"DOWN") 또는 None
-        self._pending_n    = 0      # 그 zone 이 연속된 프레임 수
+        self._extreme = None   # UP 상태면 추적 중인 peak, DOWN 상태면 valley
+        self._pending_n = 0    # 전환 조건이 연속 만족된 프레임 수
 
     def update(self, angles: dict) -> tuple[int, str]:
         vals = [angles[k] for k in self.keys if k in angles]
         if not vals:
-            # 관절 미검출 프레임 — 스무딩 버퍼/디바운스 상태를 깨지 않고 현 상태 유지
+            # 관절 미검출 프레임 — 버퍼/추적 상태를 건드리지 않고 현 상태 유지
             return self.count, self.stage
 
         self._angle_buf.append(sum(vals) / len(vals))
         ordered = sorted(self._angle_buf)
-        smoothed = ordered[len(ordered) // 2]   # 중앙값 (윈도가 짧을 땐 자동으로 가벼운 스무딩)
+        a = ordered[len(ordered) // 2]   # 중앙값
 
-        if smoothed > self.up_thr:
-            zone = "UP"
-        elif smoothed < self.down_thr:
-            zone = "DOWN"
-        else:
-            zone = None   # 데드밴드 — 직전 stage 유지
-
-        if zone is None or zone == self.stage:
-            self._pending_zone = None
-            self._pending_n    = 0
+        if self._extreme is None:
+            self._extreme = a
             return self.count, self.stage
 
-        # 현재 stage 와 다른 zone 후보 — 연속 프레임 누적
-        if zone == self._pending_zone:
-            self._pending_n += 1
-        else:
-            self._pending_zone = zone
-            self._pending_n    = 1
-
-        if self._pending_n >= self.debounce_frames:
-            if zone == "UP" and self.stage == "DOWN":
-                self.count += 1
-            self.stage = zone
-            self._pending_zone = None
-            self._pending_n    = 0
+        if self.stage == "UP":
+            if a > self._extreme:
+                self._extreme = a                       # peak 갱신
+            descending = a <= self._extreme - self.drop_deg
+            self._pending_n = self._pending_n + 1 if descending else 0
+            if self._pending_n >= self.debounce_frames:
+                self.stage = "DOWN"
+                self._extreme = a                       # valley 추적 시작
+                self._pending_n = 0
+        else:  # DOWN
+            if a < self._extreme:
+                self._extreme = a                       # valley 갱신
+            recovering = a >= self._extreme + self.rise_deg
+            self._pending_n = self._pending_n + 1 if recovering else 0
+            if self._pending_n >= self.debounce_frames:
+                self.stage = "UP"
+                self._extreme = a                       # peak 추적 시작
+                self._pending_n = 0
+                self.count += 1                         # 골짜기 하나 완성 = 1 rep
 
         return self.count, self.stage
 
 
 def make_rep_counter(exercise: str) -> RepCounter:
-    """EXERCISE_REGISTRY의 분석기에서 임계값을 끌어와 RepCounter 생성."""
+    """EXERCISE_REGISTRY의 분석기에서 카운터용 angle key를 끌어와 RepCounter 생성."""
     if exercise not in EXERCISE_REGISTRY:
         raise UnsupportedExerciseError(exercise)
-    a = EXERCISE_REGISTRY[exercise]
-    return RepCounter(a.up_thr, a.down_thr, a.primary_angle_keys)
+    return RepCounter(EXERCISE_REGISTRY[exercise].primary_angle_keys)
 
 
 class SquatCounter:
@@ -237,8 +236,7 @@ class SquatCounter:
     호환을 위해 시그니처만 보존하고 로직은 RepCounter에 위임한다.
     """
     def __init__(self):
-        a = SquatAnalyzer
-        self._inner = RepCounter(a.up_thr, a.down_thr, a.primary_angle_keys)
+        self._inner = RepCounter(SquatAnalyzer.primary_angle_keys)
 
     @property
     def count(self) -> int:

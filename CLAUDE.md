@@ -501,16 +501,19 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - WS `{"type":"summary"}` 응답(`{"type":"summary","summary":{...}}`)이 위 구조를 그대로 전달 → 클라이언트(Android)는 `assessment`를 헤드라인으로, `issues_detail[].message`+`.tip`을 항목으로 그리면 됨. `live_client.py`도 종료 시 콘솔에 같은 형식으로 출력.
 - 새 운동/이슈 추가 시: `MESSAGES`에 짧은 문구 + `COACHING_TIPS`에 상세 팁을 같은 full key로 등록하면 요약이 자동으로 따라옴(매니저 코드 수정 불필요).
 
-### RepCounter 시간적 안정화 (동작 인식 안정화)
+### RepCounter — 골짜기(valley) 검출 + 시간적 안정화
 
-프레임 1장씩 독립 분석(IMAGE 모드)이라 각도·stage가 매 프레임 출렁여서 rep 카운트/stage가 깜빡이던 문제를, `RepCounter`에 시간적 안정화를 넣어 완화했다 (`test_pose_8.py`).
+`RepCounter`(`test_pose_8.py`)는 두 가지 문제를 풀었다: ① 프레임 단위 각도 노이즈로 rep/stage가 깜빡임, ② 고정 임계값(예: 무릎 < 120°)이라 얕은 동작·"선 자세가 살짝 굽은 사람"의 rep 을 못 셈.
 
-- **중앙값 스무딩** — 최근 `smooth_window`개(기본 5) 프레임의 평균 primary 각도 중 **중앙값**을 작업 각도로 사용. 단발 스파이크가 곧바로 제거됨(median은 평균보다 이상치에 강함).
-- **전환 디바운스** — 스무딩 각도가 임계값 너머 zone(UP/DOWN)을 가리키는 상태가 `debounce_frames`개(기본 2) 연속될 때만 stage 전환을 확정. 1~2프레임짜리 글리치 무시.
-- `(down_thr, up_thr)` 구간은 그대로 데드밴드(히스테리시스) — 그 안에서는 직전 stage 유지. `RepCounter.stage`는 여전히 `"UP"`/`"DOWN"`만 가짐(MID 없음 — 데드밴드 동안 직전 값 유지).
-- 관절 미검출(`angles`가 비거나 키 없음) 프레임은 버퍼/디바운스 상태를 건드리지 않고 현 상태 그대로 통과.
-- `smooth_window`/`debounce_frames`는 `RepCounter.__init__` 인자(기본값 보유) — `make_rep_counter`/`SquatCounter`는 기본값 사용. 클라이언트 fps가 낮아 반응이 느리면 `smooth_window`를 줄이면 됨.
-- **부작용/한계**: 스무딩+디바운스로 stage 확정이 약 0.5~1초(클라이언트 fps에 비례) 지연됨 — 한 rep 2~4초 기준 문제없음. 다만 0.5초 미만의 아주 빠른 반복은 누락될 수 있음(사실상 의도된 동작). 분석기 내부 form-check 게이팅(DOWN일 때만 폼 검사)은 여전히 per-frame이지만, 아래 VIDEO 모드 도입으로 입력 랜드마크 자체가 안정화되어 그 영향은 크게 줄었다.
+- **골짜기 검출 (고정 임계값 → 상대 동작)**:
+  - UP 상태: 최근 최대각(peak) 추적. 스무딩 각도가 `peak - drop_deg`(기본 25°) 이하로 내려가면 → DOWN 전환, valley 추적 시작.
+  - DOWN 상태: 최근 최소각(valley) 추적. 스무딩 각도가 `valley + rise_deg`(기본 25°) 이상으로 올라가면 → UP 전환 + **count += 1** (골짜기 하나 = 1 rep).
+  - 사람마다 ROM·기립 각도가 달라도 자동 적응. 한 rep 으로 인정되려면 최소 `drop_deg`만큼 내려갔다 `rise_deg`만큼 올라와야 하므로 작은 흔들림(< 25°)은 안 셈.
+- **중앙값 스무딩** — 최근 `smooth_window`개(기본 5) 평균 primary 각도의 **중앙값**을 작업 각도로 사용. 단발 스파이크 제거.
+- **전환 디바운스** — 전환 조건(하강/복귀)이 `debounce_frames`개(기본 2) 연속될 때만 확정. 1~2프레임 글리치 무시.
+- `RepCounter.stage`는 `"UP"`/`"DOWN"`만 가짐(MID 없음). 관절 미검출(`angles` 비거나 키 없음) 프레임은 버퍼/추적 상태를 건드리지 않고 현 상태 통과.
+- 생성: `RepCounter(primary_angle_keys, drop_deg=25, rise_deg=25, smooth_window=5, debounce_frames=2)`. `make_rep_counter(exercise)`는 분석기의 `primary_angle_keys`만 끌어와 기본값으로 생성. `SquatCounter`(8주차 호환 래퍼)도 동일. **`up_thr`/`down_thr`는 더 이상 `RepCounter`가 쓰지 않는다** — 분석기 클래스 속성으로 남아 *분석기 내부의 form-check 게이팅*에만 쓰임.
+- **부작용/한계**: 스무딩+디바운스로 rep 확정이 약 0.5~1초(클라이언트 fps에 비례) 지연 — rep 2~4초 기준 무방, 0.5초 미만 초고속 반복은 누락 가능(의도된 동작). **분석기의 form-check 게이팅은 여전히 고정 `down_thr`** — 즉 얕은 squat(예: 130°)은 *카운트*는 되지만 down_thr(120°) 미만이 아니라 *폼 검사*는 안 됨(realtime feedback 이 "준비 자세를 잡으세요"로 남을 수 있음). 폼 검사까지 적응시키려면 별도 작업 필요.
 
 ### 실시간 안정화: VIDEO 모드 + 연결별 분석기 (LivePoseSession)
 
