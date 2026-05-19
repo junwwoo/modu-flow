@@ -126,7 +126,7 @@ moduflow_project/
 
 ### pose_server.py — FastAPI 서버
 
-#### REST: `POST /analyze`
+#### REST: `POST /api/v1/analyze`
 - 요청: `{"image": "<base64>"}` (data URL 접두어 자동 제거)
 - base64 → PIL → RGB → BGR 변환 후 `analyze_pose` 호출
 - 응답: `{"posture", "feedback", "angles"}`
@@ -134,7 +134,7 @@ moduflow_project/
 - 에러: 빈 이미지/잘못된 base64/형식 미인식 → 400, 분석 예외 → 500
 - 헬스체크: `GET /`, `GET /health`
 
-#### WebSocket: `/ws`
+#### WebSocket: `/api/v1/ws`
 - 연결 유지 상태에서 프레임을 연속 처리 (실시간용)
 - 클라이언트 → 서버: `{"type": "frame", "image": "<base64>"}`
 - 서버 → 클라이언트:
@@ -216,13 +216,13 @@ done
 
 ### 프로토콜 확장
 
-#### REST `POST /analyze`
+#### REST `POST /api/v1/analyze`
 - 요청: `{"image": "<base64>", "exercise": "squat"|"pushup"}` (`exercise` 옵셔널, 기본 `"squat"`)
 - 응답: `{"posture", "feedback", "angles", "exercise"}`
 - 미지원 운동명 → 400 `{"detail": "지원하지 않는 운동입니다."}`
 - MediaPipe 추론 예외 → 500 `{"detail": "자세 분석에 실패했습니다. 잠시 후 다시 시도해주세요."}`
 
-#### WebSocket `/ws`
+#### WebSocket `/api/v1/ws`
 - 프레임 메시지에 `exercise` 추가. **같은 연결 안에서 프레임마다 다른 값 전송 가능** (서버 stateless, 운동 전환 시 재연결 불필요)
 - 응답에 `exercise` 에코
 - 미지원 운동명 → `{"type": "error", "message": "지원하지 않는 운동입니다."}` + 연결 유지
@@ -345,7 +345,7 @@ python src/test_dataset.py --verbose        # 통과 케이스도 출력
 ```python
 sm = ExerciseSessionManager()
 result = analyze_pose(frame, "squat")
-enriched = sm.update("squat", result)  # → result + count/stage/rep_completed
+enriched = sm.update("squat", result)  # → result + count/stage/repCompleted
 
 # 운동 전환 — squat 상태는 매니저 안에 그대로 보존
 result = analyze_pose(frame, "pushup")
@@ -444,7 +444,7 @@ count, stage = counter.update(result["angles"])
 | GCP 프로젝트 | `moduflow-ai-pose` (프로젝트 번호 489316272296) — 본인의 다른 프로젝트와 분리, 동일 결제 계정 |
 | 서비스 | Cloud Run `moduflow-ai`, 리전 `asia-northeast3` (서울) |
 | 공개 URL | `https://moduflow-ai-489316272296.asia-northeast3.run.app` |
-| 엔드포인트 | REST `POST /analyze` · WS `wss://.../ws` · 헬스 `/health` · Swagger `/docs` · OpenAPI `/openapi.json` |
+| 엔드포인트 | REST `POST /api/v1/analyze` · WS `wss://.../api/v1/ws` · 헬스 `/health` · Swagger `/docs` · OpenAPI `/openapi.json` |
 | 인증 | `--allow-unauthenticated` (공개) — 안드로이드가 GCP 인증 없이 접근 |
 | 스펙 | `--memory=2Gi --cpu=2 --timeout=3600 --cpu-boost`, `min-instances=0` |
 
@@ -481,7 +481,7 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
   - `{"type": "frame", "image", "exercise"}` — 기존과 동일
   - `{"type": "reset", "exercise"?}` — `exercise` 생략 시 세션 전체 초기화 → `{"type": "reset_ok", "exercise": <or null>}`
   - `{"type": "summary"}` — `{"type": "summary", "summary": {...get_summary()...}}`
-- **`result` 응답 필드 확장**: 기존 `posture/feedback/angles/exercise`에 더해 `issues`(prefix 없는 이슈 키 배열), `count`(현재 rep 수), `stage`(`UP/DOWN/MID`), `rep_completed`(이 프레임에서 DOWN→UP 전이 발생 여부) 추가. 9·10주차 클라이언트는 추가 필드를 무시하면 그대로 동작 → 하위 호환.
+- **`result` 응답 필드 확장**: 기존 `posture/feedback/angles/exercise`에 더해 `issues`(prefix 없는 이슈 키 배열), `count`(현재 rep 수), `stage`(`UP/DOWN/MID`), `repCompleted`(이 프레임에서 DOWN→UP 전이 발생 여부) 추가. 9·10주차 클라이언트는 추가 필드를 무시하면 그대로 동작 → 하위 호환.
 - 사람 미검출 등으로 `angles`가 `{}`여도 `RepCounter.update`가 빈 값을 무시하므로 안전. `exercise` 검증은 `analyze_pose`가 먼저 수행하므로 `session.update`는 추가로 던지지 않음.
 - `analyze_pose` 결과 dict가 `response_model`로 필터링되는 REST와 달리 WS는 직접 직렬화하므로 `issues`까지 그대로 전달.
 - **잔여 과제**: `LungeAnalyzer._prev_front`는 여전히 `EXERCISE_REGISTRY`의 전역 단일 인스턴스에 묶여 있어 동시 다중 연결 시 lunge 앞다리 판정이 섞일 수 있음. rep 카운트는 연결별로 격리됐지만 분석기 인스턴스 격리(분석기 팩토리)는 별도 작업으로 남김.
@@ -543,9 +543,24 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - **신규 프로젝트 빌드 권한 이슈(해결됨)**: `gcloud run deploy --source` 가 기본 컴퓨트 SA(`<번호>-compute@developer.gserviceaccount.com`)로 빌드하는데 권한이 없어 `PERMISSION_DENIED` 발생 → `gcloud projects add-iam-policy-binding moduflow-ai-pose --member=serviceAccount:489316272296-compute@developer.gserviceaccount.com --role=roles/cloudbuild.builds.builder` 로 해결, 이후 유지됨
 - **비용**: 요청 처리 시간만 과금되며 유휴 시 0원에 수렴. 인스턴스 수동 중지 불필요
 
+## 12주차: 팀 API 연동 컨벤션 정렬
+
+백엔드(Spring Boot)가 팀 전체 API 계약의 기준. 4개 컴포넌트(Spring / Android / React PWA / FastAPI)가 공통 컨벤션을 따르도록 정렬하였다. FastAPI 파트에 적용한 두 규칙:
+
+- **경로**: 비즈니스 API 는 `/api/v1` prefix — `POST /api/v1/analyze`, `WS /api/v1/ws`. 운영용 엔드포인트 `GET /` · `GET /health` 는 prefix 없이 root 유지 (Cloud Run liveness probe·헬스 폴링이 안정 경로를 기대하므로 관례상 제외).
+- **JSON Key 는 camelCase** (DB 컬럼 snake_case ↔ API JSON camelCase 정책). 변경된 키:
+  - WS `result`: `rep_completed` → `repCompleted`
+  - WS `summary`(`ExerciseSessionManager.get_summary()`): `session_id`→`sessionId`, `start_time`→`startTime`, `clean_reps`→`cleanReps`, `last_posture`→`lastPosture`, `issue_counts`→`issueCounts`, `issues_detail`→`issuesDetail`, `rep_records`→`repRecords`
+  - Python 내부 식별자(dataclass 필드·지역변수)는 PEP 8 대로 snake_case 유지 — camelCase 는 **JSON 직렬화 경계**(WS 전송 / `get_summary()` 반환)에서만 적용.
+
+스코프 주의: FastAPI 는 Android 와 WebSocket 직결이고 Spring 을 거치지 않으며, 응답 필드(`posture`/`feedback`/`angles`/`issues`/`assessment`/`tip` 등)는 AI 추론 도메인 고유라 Spring Swagger/DTO 에 존재하지 않는다. 즉 FastAPI 가 따르는 것은 *네이밍 컨벤션*이지 *DTO 스키마*가 아니다. Android 가 Spring 으로 저장(REST ②)하는 운동 세션 데이터만 DTO 를 따르면 되고, 그 매핑은 Android 측 책임.
+
+미반영(잔여): legacy `SessionDataManager`/`PoseAPIClient`(7주차 Spring 직결 잔재, 현재 API 경로 아님)·`src/test/` 아카이브·`docs/*_w10.*` 스냅샷은 미수정. 팀 공유 contract 문서는 신규 버전으로 재발행 필요.
+
 ## Conventions
 
 - 언어: 한국어 주석 사용 / 한국어 피드백 메시지 (10주차 전환)
+- API: 비즈니스 경로 `/api/v1` prefix, JSON Key camelCase (운영용 `/`·`/health` 는 root)
 - ESC 키로 프로그램 종료 (웹캠 스크립트 한정)
 - BGR → RGB 변환 후 MediaPipe에 전달
 - 서버에서는 BGR numpy 배열을 `analyze_pose`의 표준 입력으로 사용

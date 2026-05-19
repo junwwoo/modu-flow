@@ -15,7 +15,7 @@ import websockets
 HERE     = os.path.dirname(os.path.abspath(__file__))
 TEST_DIR = os.path.normpath(os.path.join(HERE, "..", "test_images"))
 SERVER   = "http://127.0.0.1:8000"
-WS_URL   = "ws://127.0.0.1:8000/ws"
+WS_URL   = "ws://127.0.0.1:8000/api/v1/ws"
 
 
 def list_images():
@@ -41,7 +41,7 @@ def test_health():
 
 def test_rest():
     print("\n" + "=" * 70)
-    print("REST 테스트: POST /analyze (exercise 미지정 → squat 회귀 검증)")
+    print("REST 테스트: POST /api/v1/analyze (exercise 미지정 → squat 회귀 검증)")
     print("=" * 70)
 
     files = list_images()
@@ -50,7 +50,7 @@ def test_rest():
         b64  = encode_b64(path)
         try:
             r = requests.post(
-                f"{SERVER}/analyze",
+                f"{SERVER}/api/v1/analyze",
                 json={"image": b64},
                 timeout=30,
             )
@@ -71,7 +71,7 @@ def test_rest():
         print("\n[exercise=pushup]")
         b64 = encode_b64(os.path.join(TEST_DIR, files[0]))
         r = requests.post(
-            f"{SERVER}/analyze",
+            f"{SERVER}/api/v1/analyze",
             json={"image": b64, "exercise": "pushup"},
             timeout=30,
         )
@@ -88,7 +88,7 @@ def test_rest():
     if files:
         b64 = encode_b64(os.path.join(TEST_DIR, files[0]))
         r = requests.post(
-            f"{SERVER}/analyze",
+            f"{SERVER}/api/v1/analyze",
             json={"image": b64, "exercise": "plank"},
             timeout=10,
         )
@@ -96,20 +96,20 @@ def test_rest():
 
     # 에러 케이스: 잘못된 base64
     print("\n[잘못된 base64]")
-    r = requests.post(f"{SERVER}/analyze",
+    r = requests.post(f"{SERVER}/api/v1/analyze",
                       json={"image": "!!!not_base64"}, timeout=10)
     print(f"  HTTP {r.status_code}  {r.text}")
 
     # 에러 케이스: 빈 image 필드
     print("\n[빈 image 필드]")
-    r = requests.post(f"{SERVER}/analyze",
+    r = requests.post(f"{SERVER}/api/v1/analyze",
                       json={"image": ""}, timeout=10)
     print(f"  HTTP {r.status_code}  {r.text}")
 
 
 async def test_websocket():
     print("\n" + "=" * 70)
-    print("WebSocket 테스트: /ws")
+    print("WebSocket 테스트: /api/v1/ws")
     print("=" * 70)
 
     files = list_images()

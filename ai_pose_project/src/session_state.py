@@ -55,7 +55,7 @@ class ExerciseSessionManager:
         sm = ExerciseSessionManager()
         result = analyze_pose(frame, "squat")
         enriched = sm.update("squat", result)
-        # enriched 에 count, stage, rep_completed 추가됨
+        # enriched 에 count, stage, repCompleted 추가됨
 
         # 다른 운동 전환 — squat 상태는 매니저 안에 그대로 보존
         result = analyze_pose(frame, "pushup")
@@ -86,10 +86,10 @@ class ExerciseSessionManager:
                       "posture" / "feedback" (옵션, 마지막 값 보존용).
 
         Returns:
-            result에 다음 키를 덧붙인 새 dict:
+            result에 다음 키를 덧붙인 새 dict (JSON Key 컨벤션 → camelCase):
               - "count": 현재 rep 카운트
               - "stage": "UP" | "DOWN" | "MID"
-              - "rep_completed": 이 프레임에서 rep이 완료되었는가 (DOWN→UP 전이)
+              - "repCompleted": 이 프레임에서 rep이 완료되었는가 (DOWN→UP 전이)
             원본 result는 변경하지 않는다.
 
         Raises:
@@ -120,9 +120,9 @@ class ExerciseSessionManager:
         state.last_posture  = result.get("posture", "")
 
         enriched = dict(result)
-        enriched["count"]         = count
-        enriched["stage"]         = stage
-        enriched["rep_completed"] = rep_completed
+        enriched["count"]        = count
+        enriched["stage"]        = stage
+        enriched["repCompleted"] = rep_completed
         return enriched
 
     # ──────────────────────────────────────────────────────────
@@ -136,16 +136,16 @@ class ExerciseSessionManager:
         """세션 전체 요약. JSON 직렬화 가능한 dict.
 
         실시간 result 의 짧은 feedback 과 달리, 여기서는 세트 종료 시 보여줄
-        **상세 코칭**을 함께 담는다. 운동별로:
-          - count / clean_reps / stage / last_posture
-          - issue_counts: {full_key → 횟수}
-          - issues_detail: [{key, count, message(짧은 문구), tip(상세 코칭)}], 횟수 내림차순
+        **상세 코칭**을 함께 담는다. JSON Key 는 camelCase 컨벤션. 운동별로:
+          - count / cleanReps / stage / lastPosture
+          - issueCounts: {full_key → 횟수}
+          - issuesDetail: [{key, count, message(짧은 문구), tip(상세 코칭)}], 횟수 내림차순
           - assessment: 한 줄 평가 문구 (예: "스쿼트 12회 완료 — 자세가 안정적이었어요!")
-          - rep_records: rep 단위 이슈 묶음 (그대로 유지)
+          - repRecords: rep 단위 이슈 묶음 (그대로 유지)
         """
         return {
-            "session_id": self.session_id,
-            "start_time": self.start_time.isoformat(),
+            "sessionId": self.session_id,
+            "startTime": self.start_time.isoformat(),
             "exercises": {
                 ex: self._summarize_exercise(ex, st)
                 for ex, st in self._states.items()
@@ -182,14 +182,14 @@ class ExerciseSessionManager:
             )
 
         return {
-            "count":         total,
-            "clean_reps":    clean_reps,
-            "stage":         st.counter.stage,
-            "last_posture":  st.last_posture,
-            "issue_counts":  dict(st.issue_counts),
-            "issues_detail": issues_detail,
-            "assessment":    assessment,
-            "rep_records":   list(st.rep_records),
+            "count":        total,
+            "cleanReps":    clean_reps,
+            "stage":        st.counter.stage,
+            "lastPosture":  st.last_posture,
+            "issueCounts":  dict(st.issue_counts),
+            "issuesDetail": issues_detail,
+            "assessment":   assessment,
+            "repRecords":   list(st.rep_records),
         }
 
     def reset(self, exercise: Optional[str] = None) -> None:

@@ -8,7 +8,7 @@
 클라이언트 측 ExerciseSessionManager로 운동별 카운트·이슈 통계를
 우측 패널에 누적 표시한다. 운동 전환 시 각 운동의 누적 상태는 보존.
 
-전제: pose_server가 ws://127.0.0.1:8000/ws 에서 실행 중이어야 함.
+전제: pose_server가 ws://127.0.0.1:8000/api/v1/ws 에서 실행 중이어야 함.
 조작:
     ESC      종료
     1        squat
@@ -31,7 +31,7 @@ if HERE not in sys.path:
 
 from session_state import ExerciseSessionManager  # noqa: E402
 
-WS_URL       = "ws://127.0.0.1:8000/ws"
+WS_URL       = "ws://127.0.0.1:8000/api/v1/ws"
 JPEG_QUALITY = 70  # 네트워크 부하 절감을 위해 적당히 압축
 
 EXERCISES = ["squat", "pushup", "lunge"]
@@ -111,7 +111,7 @@ def draw_exercise_panel(frame, sm, current_exercise):
         st = summary["exercises"].get(ex)
         if not st:
             continue
-        for k, v in st["issue_counts"].items():
+        for k, v in st["issueCounts"].items():
             issue_totals[k] = issue_totals.get(k, 0) + v
     top = sorted(issue_totals.items(), key=lambda kv: -kv[1])[:5]
     if not top:
@@ -228,7 +228,7 @@ async def run():
                 continue
             any_ex = True
             print(f"\n[{ex}] {st['assessment']}")
-            for d in st["issues_detail"]:
+            for d in st["issuesDetail"]:
                 print(f"  - {d['message']} ({d['count']}회)")
                 if d["tip"]:
                     print(f"      → {d['tip']}")

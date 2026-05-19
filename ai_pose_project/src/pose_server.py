@@ -1,18 +1,21 @@
 """
 FastAPI 자세 분석 서버
 
+API 경로는 /api/v1 기준 (팀 API 연동 컨벤션). 운영용 /, /health 는 root 유지.
+JSON Key 는 camelCase (DB snake_case ↔ API camelCase 컨벤션).
+
 엔드포인트:
-  POST /analyze
+  POST /api/v1/analyze
     요청 (JSON): { "image": "<base64>", "exercise": "squat"|"pushup" (생략 시 squat) }
     응답 (JSON): { "posture": "good"|"bad", "feedback": str, "angles": {...},
                   "exercise": "squat"|"pushup" }
 
-  WS /ws  (연결 단위: VIDEO 모드 랜드마커 LivePoseSession + rep 카운트·이슈 통계 누적)
+  WS /api/v1/ws  (연결 단위: VIDEO 모드 랜드마커 LivePoseSession + rep 카운트·이슈 통계 누적)
     클라이언트 → 서버: { "type": "frame",   "image": "<base64>", "exercise": ... }
                      { "type": "reset",   "exercise": ... }   # 생략 시 세션 전체 초기화
                      { "type": "summary" }
     서버 → 클라이언트: { "type": "result",   "posture", "feedback", "angles", "issues",
-                                            "exercise", "count", "stage", "rep_completed" }
+                                            "exercise", "count", "stage", "repCompleted" }
                      { "type": "reset_ok", "exercise": ... }
                      { "type": "summary",  "summary": {...} }
                      { "type": "error",    "message": "..." }
@@ -129,7 +132,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/analyze", response_model=AnalyzeResponse)
+@app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 def analyze(req: AnalyzeRequest):
     image = decode_base64_image(req.image)
 
@@ -184,7 +187,7 @@ def _process_frame_blocking(live: LivePoseSession, image_b64: str, exercise: str
 # ──────────────────────────────────────────────────────────────
 # WebSocket 엔드포인트
 # ──────────────────────────────────────────────────────────────
-@app.websocket("/ws")
+@app.websocket("/api/v1/ws")
 async def ws_analyze(websocket: WebSocket):
     """
     실시간 자세 분석용 WebSocket.
@@ -202,7 +205,7 @@ async def ws_analyze(websocket: WebSocket):
 
     송신:
       {"type": "result",   "posture", "feedback", "angles", "issues",
-                           "exercise", "count", "stage", "rep_completed"}
+                           "exercise", "count", "stage", "repCompleted"}
       {"type": "reset_ok", "exercise": <초기화한 운동명 또는 null>}
       {"type": "summary",  "summary": { ... ExerciseSessionManager.get_summary() ... }}
       {"type": "error",    "message": "..."}      # 개별 프레임 에러는 연결 유지
@@ -272,7 +275,7 @@ async def ws_analyze(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "message": MSG["inference_failed"]})
                 continue
 
-            # 세션 매니저에 결과 반영 → count / stage / rep_completed 부가.
+            # 세션 매니저에 결과 반영 → count / stage / repCompleted 부가.
             # 사람 미검출 등으로 angles 가 비어도 RepCounter 가 그대로 무시하므로 안전.
             # (exercise 는 analyze_pose 에서 이미 검증됨 → update 가 추가로 던지지 않음)
             enriched = session.update(exercise, result)
@@ -286,7 +289,7 @@ async def ws_analyze(websocket: WebSocket):
                 "exercise":      enriched["exercise"],
                 "count":         enriched["count"],
                 "stage":         enriched["stage"],
-                "rep_completed": enriched["rep_completed"],
+                "repCompleted":  enriched["repCompleted"],
             })
 
     except WebSocketDisconnect:
