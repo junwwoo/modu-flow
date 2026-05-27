@@ -86,7 +86,11 @@ MIN_LANDMARK_VISIBILITY = 0.5
 # 스쿼트 폼 검사 임계값 (stage 임계값은 SquatAnalyzer 클래스 속성으로 이전)
 # ──────────────────────────────────────────────────────────────
 KNEE_FORWARD_MARGIN  = 0.05
-TRUNK_LEAN_MARGIN    = 0.10
+# 상체 숙임: 어깨-엉덩이의 수평 오프셋 / 수직 거리 (≈ 몸통이 수직에서 기운 tan값).
+# 사람 크기에 불변(둘 다 함께 스케일)하며, 측면에서 앞으로 숙일수록 커진다.
+# (이전 0.10은 "세로 간격"이라 upright 일수록 커지는 역방향 버그였음 — 모든 스쿼트가 오탐)
+# 정규화 좌표 기반이라 이미지 종횡비 영향은 있음(세로 폰 사진 기준 튜닝). 데이터로 재튜닝 권장.
+TRUNK_LEAN_RATIO     = 0.5
 
 FEEDBACK_DISPLAY_SEC = 3.0
 
@@ -134,9 +138,12 @@ def judge_squat_pose(landmarks, angle_lk, angle_rk):
     if rk.x - ra.x > KNEE_FORWARD_MARGIN:
         issues.append({"key": "right_knee_forward", "label": "R Knee Forward"})
 
-    avg_hip_y = (lh.y + rh.y) / 2
+    avg_sho_x = (ls.x + rs.x) / 2
+    avg_hip_x = (lh.x + rh.x) / 2
     avg_sho_y = (ls.y + rs.y) / 2
-    if avg_hip_y - avg_sho_y > TRUNK_LEAN_MARGIN:
+    avg_hip_y = (lh.y + rh.y) / 2
+    lean_ratio = abs(avg_sho_x - avg_hip_x) / (abs(avg_hip_y - avg_sho_y) + 1e-6)
+    if lean_ratio > TRUNK_LEAN_RATIO:
         issues.append({"key": "trunk_lean", "label": "Trunk Lean"})
 
     diff = abs(angle_lk - angle_rk)
@@ -754,7 +761,7 @@ class PushupAnalyzer:
 LUNGE_FRONT_LEG_Z_MARGIN  = 0.05  # |Δz| 이하면 Y로 폴백
 LUNGE_FRONT_LEG_Y_MARGIN  = 0.05  # |Δy(knee)| 이하면 히스테리시스로 폴백
 LUNGE_KNEE_FORWARD_MARGIN = 0.05  # 앞다리 무릎 X가 발목보다 전방 (squat과 동일 규약)
-LUNGE_TRUNK_LEAN_MARGIN   = 0.10  # 어깨-엉덩이 Y 차이 임계
+LUNGE_TRUNK_LEAN_RATIO    = 0.5   # 상체 숙임: 수평/수직 오프셋 비율 (squat과 동일 규약, lunge 데이터 미검증)
 
 
 class LungeAnalyzer:
@@ -878,12 +885,13 @@ class LungeAnalyzer:
         if knee.x - ankle.x > LUNGE_KNEE_FORWARD_MARGIN:
             issues.append("front_knee_forward")
 
-        # 상체 기울임 (어깨가 엉덩이보다 충분히 위에 있지 않음)
+        # 상체 숙임: 어깨가 엉덩이보다 앞으로(수평) 나간 정도 (squat 과 동일 규약)
         ls = landmarks[LEFT_SHOULDER];  rs = landmarks[RIGHT_SHOULDER]
         lh = landmarks[LEFT_HIP];       rh = landmarks[RIGHT_HIP]
-        avg_sho_y = (ls.y + rs.y) / 2
-        avg_hip_y = (lh.y + rh.y) / 2
-        if avg_hip_y - avg_sho_y > LUNGE_TRUNK_LEAN_MARGIN:
+        avg_sho_x = (ls.x + rs.x) / 2;  avg_hip_x = (lh.x + rh.x) / 2
+        avg_sho_y = (ls.y + rs.y) / 2;  avg_hip_y = (lh.y + rh.y) / 2
+        lean_ratio = abs(avg_sho_x - avg_hip_x) / (abs(avg_hip_y - avg_sho_y) + 1e-6)
+        if lean_ratio > LUNGE_TRUNK_LEAN_RATIO:
             issues.append("trunk_lean")
 
         return issues
