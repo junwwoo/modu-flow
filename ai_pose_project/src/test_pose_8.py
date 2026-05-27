@@ -898,12 +898,179 @@ class LungeAnalyzer:
 
 
 # ──────────────────────────────────────────────────────────────
+# 상체/코어 분석기 (13주차 신규) — 사레레 / 숄더프레스 / 풀업 / 싯업
+# 폼 검사는 보수적: 2D 단일 카메라로 신뢰성 있게 잡히는 것(좌우 비대칭·과도 거상)만 emit.
+# rep 카운팅은 RepCounter(적응형)가 primary_angle_keys 로 처리하므로 데이터 없이도 횟수는 정확.
+# ──────────────────────────────────────────────────────────────
+LATERAL_RAISE_ASYMMETRY_DEG    = 20    # 좌우 어깨 외전각 차이 임계
+LATERAL_RAISE_OVERRAISE_MARGIN = 0.03  # 손목이 어깨보다 이만큼(정규화 y) 위로 가면 과도 거상
+SHOULDER_PRESS_ASYMMETRY_DEG   = 20    # 좌우 팔꿈치각 차이 임계
+PULLUP_ASYMMETRY_DEG           = 20    # 좌우 팔꿈치각 차이 임계
+
+
+class LateralRaiseAnalyzer:
+    """사레레(사이드 레터럴 레이즈) 분석기 (13주차 신규). 정면 촬영 가정.
+
+    primary = 어깨 외전각(hip-shoulder-elbow): 팔 내림 ~15°, 팔 옆으로 듦 ~90°.
+    """
+    name = "lateral_raise"
+    up_thr             = 80   # 팔을 든 상태(외전각 큼) = active/top
+    down_thr           = 30   # 팔을 내린 상태
+    primary_angle_keys = ["left_shoulder", "right_shoulder"]
+    required_joint_pairs = [
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        (LEFT_ELBOW,    RIGHT_ELBOW),
+        (LEFT_WRIST,    RIGHT_WRIST),
+        (LEFT_HIP,      RIGHT_HIP),
+    ]
+
+    def analyze(self, landmarks) -> dict:
+        def xy(idx):
+            lm = landmarks[idx]
+            return (lm.x, lm.y)
+
+        angle_ls = calculate_angle(xy(LEFT_HIP),  xy(LEFT_SHOULDER),  xy(LEFT_ELBOW))
+        angle_rs = calculate_angle(xy(RIGHT_HIP), xy(RIGHT_SHOULDER), xy(RIGHT_ELBOW))
+        angles = {"left_shoulder": angle_ls, "right_shoulder": angle_rs}
+
+        active = (angle_ls + angle_rs) / 2 > self.up_thr  # 팔을 든 정점
+
+        issues = []
+        if abs(angle_ls - angle_rs) > LATERAL_RAISE_ASYMMETRY_DEG:
+            issues.append("asymmetry")
+        # 과도 거상: 어깨 높이까지만 올려야 하는데 손목이 어깨보다 위로 올라감
+        avg_wrist_y = (landmarks[LEFT_WRIST].y + landmarks[RIGHT_WRIST].y) / 2
+        avg_sho_y   = (landmarks[LEFT_SHOULDER].y + landmarks[RIGHT_SHOULDER].y) / 2
+        if avg_sho_y - avg_wrist_y > LATERAL_RAISE_OVERRAISE_MARGIN:
+            issues.append("arms_too_high")
+
+        return _form_result("lateral_raise", angles, issues, active)
+
+
+class ShoulderPressAnalyzer:
+    """숄더프레스 분석기 (13주차 신규). 정면 촬영 가정.
+
+    primary = 팔꿈치각: 시작(귀 옆) ~90°, 머리 위 완전히 폄 ~170°.
+    팔을 머리 위로 뻗으므로 손목이 화면 상단을 벗어나면 visibility 게이트가 걸릴 수 있다(정상).
+    """
+    name = "shoulder_press"
+    up_thr             = 160  # 팔 완전히 폄(머리 위) = active/top
+    down_thr           = 90   # 팔꿈치 굽힌 시작 자세
+    primary_angle_keys = ["left_elbow", "right_elbow"]
+    required_joint_pairs = [
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        (LEFT_ELBOW,    RIGHT_ELBOW),
+        (LEFT_WRIST,    RIGHT_WRIST),
+    ]
+
+    def analyze(self, landmarks) -> dict:
+        def xy(idx):
+            lm = landmarks[idx]
+            return (lm.x, lm.y)
+
+        angle_le = calculate_angle(xy(LEFT_SHOULDER),  xy(LEFT_ELBOW),  xy(LEFT_WRIST))
+        angle_re = calculate_angle(xy(RIGHT_SHOULDER), xy(RIGHT_ELBOW), xy(RIGHT_WRIST))
+        angles = {"left_elbow": angle_le, "right_elbow": angle_re}
+
+        active = (angle_le + angle_re) / 2 > self.up_thr  # 머리 위로 완전히 편 정점
+
+        issues = []
+        if abs(angle_le - angle_re) > SHOULDER_PRESS_ASYMMETRY_DEG:
+            issues.append("asymmetry")
+
+        return _form_result("shoulder_press", angles, issues, active)
+
+
+class PullupAnalyzer:
+    """풀업 분석기 (13주차 신규).
+
+    primary = 팔꿈치각: 매달림(폄) ~165°, 끌어올린 정점(굽힘) ~70°.
+    턱이 바를 넘었는지는 바 기준점이 없어 판정 불가 — 횟수 + 좌우 비대칭만.
+    """
+    name = "pullup"
+    up_thr             = 160  # 매달린 시작 자세(팔 폄)
+    down_thr           = 90   # 끌어올린 정점(팔 굽힘) = active/top
+    primary_angle_keys = ["left_elbow", "right_elbow"]
+    required_joint_pairs = [
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        (LEFT_ELBOW,    RIGHT_ELBOW),
+        (LEFT_WRIST,    RIGHT_WRIST),
+    ]
+
+    def analyze(self, landmarks) -> dict:
+        def xy(idx):
+            lm = landmarks[idx]
+            return (lm.x, lm.y)
+
+        angle_le = calculate_angle(xy(LEFT_SHOULDER),  xy(LEFT_ELBOW),  xy(LEFT_WRIST))
+        angle_re = calculate_angle(xy(RIGHT_SHOULDER), xy(RIGHT_ELBOW), xy(RIGHT_WRIST))
+        angles = {"left_elbow": angle_le, "right_elbow": angle_re}
+
+        active = (angle_le + angle_re) / 2 < self.down_thr  # 끌어올린 정점
+
+        issues = []
+        if abs(angle_le - angle_re) > PULLUP_ASYMMETRY_DEG:
+            issues.append("asymmetry")
+
+        return _form_result("pullup", angles, issues, active)
+
+
+class SitupAnalyzer:
+    """싯업 분석기 (13주차 신규). 측면 촬영 가정.
+
+    primary = 엉덩이각(shoulder-hip-knee): 누움 ~160°, 일어난 정점 ~70°.
+    보수적 — 목 당김 등 신뢰성 있는 폼 결함이 2D로 안 잡혀 횟수 + 자세 안내만 제공.
+    """
+    name = "situp"
+    up_thr             = 150  # 누운 시작 자세(각 큼)
+    down_thr           = 90   # 일어난 정점(각 작음) = active/top
+    primary_angle_keys = ["left_hip", "right_hip"]
+    required_joint_pairs = [
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        (LEFT_HIP,      RIGHT_HIP),
+        (LEFT_KNEE,     RIGHT_KNEE),
+    ]
+
+    def analyze(self, landmarks) -> dict:
+        def xy(idx):
+            lm = landmarks[idx]
+            return (lm.x, lm.y)
+
+        angle_lh = calculate_angle(xy(LEFT_SHOULDER),  xy(LEFT_HIP),  xy(LEFT_KNEE))
+        angle_rh = calculate_angle(xy(RIGHT_SHOULDER), xy(RIGHT_HIP), xy(RIGHT_KNEE))
+        angles = {"left_hip": angle_lh, "right_hip": angle_rh}
+
+        active = (angle_lh + angle_rh) / 2 < self.down_thr  # 일어난 정점
+        return _form_result("situp", angles, [], active)  # 보수적: 이슈 emit 없음
+
+
+def _form_result(exercise: str, angles: dict, issues: list, active: bool) -> dict:
+    """13주차 상체/코어 분석기 공용 결과 빌더.
+
+    issues 있으면 bad + 결합 메시지, 없으면 active(정점)일 때 good_form / 아니면 standby.
+    (squat/pushup/lunge 의 분기 로직과 동일 규약 — exercise prefix 로 메시지 조회.)
+    """
+    posture = "good" if not issues else "bad"
+    if issues:
+        feedback = " | ".join(MSG.get(f"{exercise}.{k}", k) for k in issues)
+    elif active:
+        feedback = MSG[f"{exercise}.good_form"]
+    else:
+        feedback = MSG[f"{exercise}.standby"]
+    return {"posture": posture, "feedback": feedback, "angles": angles, "issues": issues}
+
+
+# ──────────────────────────────────────────────────────────────
 # 운동 레지스트리 (분석기 dispatch)
 # ──────────────────────────────────────────────────────────────
 EXERCISE_REGISTRY: dict[str, ExerciseAnalyzer] = {
-    "squat":  SquatAnalyzer(),
-    "pushup": PushupAnalyzer(),
-    "lunge":  LungeAnalyzer(),
+    "squat":          SquatAnalyzer(),
+    "pushup":         PushupAnalyzer(),
+    "lunge":          LungeAnalyzer(),
+    "lateral_raise":  LateralRaiseAnalyzer(),
+    "shoulder_press": ShoulderPressAnalyzer(),
+    "pullup":         PullupAnalyzer(),
+    "situp":          SitupAnalyzer(),
 }
 
 

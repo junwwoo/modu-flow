@@ -71,10 +71,10 @@ moduflow_project/
     │   ├── pushup/                 #   라벨별 하위 폴더 (good_up/good_down/hip_sag/hip_pike/camera_angle)
     │   └── lunge/                  #   라벨별 하위 폴더 (good_up/good_down/front_knee_forward/trunk_lean/unknown_front_leg)
     └── src/
-        ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer + 12주차 RepCounter 안정화/LivePoseSession(VIDEO)
+        ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer + 12주차 RepCounter 안정화/LivePoseSession(VIDEO) + 13주차 trunk_lean 수정/운동 4종(사레레·숄더프레스·풀업·싯업)
         ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket) + 12주차 WS 연결단위 세션화(LivePoseSession + ExerciseSessionManager)
-        ├── feedback_messages.py    # 10주차 한국어 메시지 dict + 12주차 COACHING_TIPS(종료 요약용 상세 코칭)
-        ├── session_state.py        # 11주차 ExerciseSessionManager + 12주차 get_summary 상세 코칭 확장
+        ├── feedback_messages.py    # 10주차 한국어 메시지 dict + 12주차 COACHING_TIPS(종료 요약용 상세 코칭) + 13주차 운동 4종 메시지/팁
+        ├── session_state.py        # 11주차 ExerciseSessionManager + 12주차 get_summary 상세 코칭 확장 + 13주차 운동 4종 한국어 라벨
         ├── test_analyze.py         # 9주차: analyze_pose 모듈 단독 테스트
         ├── test_client.py          # 9주차: REST + WebSocket 통합 테스트
         ├── live_client.py          # 9주차: 실시간 웹캠 → WebSocket 클라이언트
@@ -556,6 +556,43 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 스코프 주의: FastAPI 는 Android 와 WebSocket 직결이고 Spring 을 거치지 않으며, 응답 필드(`posture`/`feedback`/`angles`/`issues`/`assessment`/`tip` 등)는 AI 추론 도메인 고유라 Spring Swagger/DTO 에 존재하지 않는다. 즉 FastAPI 가 따르는 것은 *네이밍 컨벤션*이지 *DTO 스키마*가 아니다. Android 가 Spring 으로 저장(REST ②)하는 운동 세션 데이터만 DTO 를 따르면 되고, 그 매핑은 Android 측 책임.
 
 미반영(잔여): legacy `SessionDataManager`/`PoseAPIClient`(7주차 Spring 직결 잔재, 현재 API 경로 아님)·`src/test/` 아카이브·`docs/*_w10.*` 스냅샷은 미수정. 팀 공유 contract 문서는 신규 버전으로 재발행 필요.
+
+## 13주차: trunk_lean 버그 수정 + 운동 종목 확장 (3 → 7)
+
+### trunk_lean 판정 버그 수정 (squat / lunge)
+
+실사진 검증 중 발견. 기존 `avg_hip_y - avg_sho_y > 0.10`(어깨~엉덩이 **세로 간격**)은 두 가지로 틀렸다:
+- **방향 역전**: 몸통이 곧을수록 세로 간격이 커져 *upright* 를 *숙임*으로 판정 (꼿꼿한 선 자세 0.26~0.30 > 숙인 스쿼트 0.17).
+- **척도 오류**: 사람 몸통은 화면 높이의 10%보다 길어 **모든 DOWN 스쿼트가 0.10 초과** → 실제 숙임과 무관하게 항상 trunk_lean 오탐.
+- 티가 안 났던 이유: 폼 검사는 DOWN 단계에서만 돌아 선 자세(UP)는 검사를 건너뛰었을 뿐, 무릎 굽힌 스쿼트는 전부 오탐 상태였음.
+
+→ **수평/수직 오프셋 비율** `abs(avg_sho_x - avg_hip_x) / abs(avg_hip_y - avg_sho_y)`(몸통이 수직에서 기운 정도 ≈ tan)로 교체. 사람 크기에 불변(둘 다 함께 스케일). 상수 `TRUNK_LEAN_MARGIN(0.10)` → **`TRUNK_LEAN_RATIO(0.5)`**, `LUNGE_TRUNK_LEAN_MARGIN` → **`LUNGE_TRUNK_LEAN_RATIO(0.5)`**. `judge_squat_pose` + `LungeAnalyzer._check_form` 동일 적용.
+- **한계**: 정규화 좌표 기반이라 이미지 종횡비 영향 있음(세로 폰 사진 기준 튜닝). 0.5는 측정 2점(약한 0.27 / 명확 1.0) 사이로 잡은 **잠정값** — 라벨 데이터로 재튜닝 권장.
+- 검증: `test_dataset.py` 11/11 PASS, `left_knee_forward` 이미지의 **허위 trunk_lean 제거** 확인.
+
+### 운동 종목 확장: 사레레 / 숄더프레스 / 풀업 / 싯업
+
+기존 3종(squat/pushup/lunge)에 상체·코어 4종 추가 → `EXERCISE_REGISTRY` 7종. Strategy+Registry 구조라 분석기 클래스 + 등록 + 메시지만 추가하면 rep 카운팅·세션 관리가 자동 동작.
+
+| 운동 (키) | primary_angle_keys | active(정점) | 보수적 폼 검사 |
+|---|---|---|---|
+| 사레레 `lateral_raise` | 어깨 외전각(hip-sho-elbow) | 외전각 > 80° | `asymmetry`(좌우 차 >20°) + `arms_too_high`(손목>어깨) |
+| 숄더프레스 `shoulder_press` | 팔꿈치각 | 팔꿈치각 > 160° | `asymmetry` |
+| 풀업 `pullup` | 팔꿈치각 | 팔꿈치각 < 90° | `asymmetry` |
+| 싯업 `situp` | 엉덩이각(sho-hip-knee) | 엉덩이각 < 90° | 없음(횟수+안내만) |
+
+- **보수적 폼 검사 원칙**: 2D 단일 카메라로 신뢰성 있게 잡히는 것(좌우 비대칭·과도 거상)만 emit. 신뢰 불가한 결함(목 당김 등)은 안 만든다.
+- 4종 공용 결과 빌더 `_form_result(exercise, angles, issues, active)` — issues 있으면 bad+결합 메시지, 없으면 active일 때 good_form / 아니면 standby (기존 분기 규약 동일).
+- **rep 카운팅은 적응형(`RepCounter` 골짜기 검출)이라 데이터 없이도 횟수 정확** — primary 각도가 어느 방향으로 오실레이션하든 카운트(사레레/숄더프레스는 active=큰 각, 풀업/싯업은 active=작은 각). 합성 4-rep 시뮬레이션에서 4종 모두 3 카운트(경계 -1은 스무딩/디바운스 정상 동작).
+- 메시지(`MESSAGES`)·코칭팁(`COACHING_TIPS`)·요약 라벨(`session_state._EXERCISE_LABEL_KO`) 모두 등록. 기존 데이터셋 11/11 회귀 0.
+- **한계**: 임계값은 합리적 기본값(미튜닝) — 실촬영 데이터로 검증·튜닝 시 정확도 상승. 숄더프레스·풀업은 팔이 머리 위로 가면 손목이 화면 밖 → visibility 게이트가 걸릴 수 있음(의도된 동작). `live_client.py`(로컬 웹캠 테스트)는 단축키 1/2/3 = squat/pushup/lunge만 — 신규 4종은 Android(운동명 전송)로 접근.
+
+### 보류한 3종 (10종 목표 중 미구현)
+
+현 아키텍처(2D MediaPipe + rep 모델)와 안 맞아 별도 설계 필요:
+- **데드리프트**: 횟수(엉덩이 힌지)는 가능하나 핵심 큐인 **허리 굽음(척추 중립)** 은 MediaPipe pose에 척추 중간 랜드마크가 없어 검출 불가.
+- **벤치프레스**: 벤치에 **누운 자세 + 바/벤치 가림**이라 포즈 검출 자체가 불안정.
+- **플랭크**: **정적 버티기**라 rep이 없음 — RepCounter(반복 동작 전제)와 불일치. **hold-time + 자세 직선성(어깨-엉덩이-발목)** 의 별도 모드 필요.
 
 ## Conventions
 

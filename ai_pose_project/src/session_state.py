@@ -34,7 +34,11 @@ from test_pose_8 import (
 from feedback_messages import MESSAGES, COACHING_TIPS
 
 # 운동명 → 한국어 표기 (요약 문구용). 없으면 키 그대로 사용.
-_EXERCISE_LABEL_KO = {"squat": "스쿼트", "pushup": "푸시업", "lunge": "런지"}
+_EXERCISE_LABEL_KO = {
+    "squat": "스쿼트", "pushup": "푸시업", "lunge": "런지",
+    "lateral_raise": "사이드 레터럴 레이즈", "shoulder_press": "숄더프레스",
+    "pullup": "풀업", "situp": "싯업",
+}
 
 
 @dataclass
