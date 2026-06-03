@@ -43,12 +43,19 @@ _EXERCISE_LABEL_KO = {
 
 @dataclass
 class ExerciseState:
-    """단일 운동의 세션 누적 상태."""
+    """단일 운동의 누적 상태.
+
+    counter/issue_counts/rep_records 는 **현재 진행 중인 세트**의 누적치이며,
+    세트 종료(`end_set`) 시 그 시점 요약이 `completed_sets` 로 스냅샷되고 초기화된다.
+    세트 개념을 쓰지 않는 호출자(예: live_client)는 세트를 한 번도 끝내지 않으므로
+    전체가 하나의 진행 중 세트처럼 동작한다(하위 호환).
+    """
     counter:        RepCounter
     issue_counts:   dict[str, int] = field(default_factory=dict)   # full_key (e.g. "squat.left_knee_forward") → 발생 횟수
     rep_records:    list[dict]     = field(default_factory=list)   # [{"rep": int, "issues": list[full_key]}]
     last_feedback:  str = ""
     last_posture:   str = ""
+    completed_sets: list[dict]     = field(default_factory=list)   # 종료된 세트별 요약 스냅샷 (1단계)
     _current_rep_issues: set[str]  = field(default_factory=set)
 
 
@@ -156,12 +163,9 @@ class ExerciseSessionManager:
             },
         }
 
-    def _summarize_exercise(self, exercise: str, st: ExerciseState) -> dict:
-        total = st.counter.count
-        clean_reps = sum(1 for r in st.rep_records if not r["issues"])
-
-        # 이슈 빈도 내림차순 + 상세 코칭 팁
-        issues_detail = [
+    def _issues_detail(self, issue_counts: dict) -> list[dict]:
+        """{full_key → 횟수} → 횟수 내림차순(동률은 키 순) [{key,count,message,tip}]."""
+        return [
             {
                 "key":     full_key,
                 "count":   cnt,
@@ -169,22 +173,28 @@ class ExerciseSessionManager:
                 "tip":     COACHING_TIPS.get(full_key, ""),
             }
             for full_key, cnt in sorted(
-                st.issue_counts.items(), key=lambda kv: (-kv[1], kv[0])
+                issue_counts.items(), key=lambda kv: (-kv[1], kv[0])
             )
         ]
 
-        label = _EXERCISE_LABEL_KO.get(exercise, exercise)
+    def _assess(self, label: str, total: int, clean_reps: int, issues_detail: list) -> str:
+        """한 줄 평가 문구. label 은 범위 표기(예: "스쿼트", "스쿼트 1세트", "스쿼트 전체")."""
         if total == 0:
-            assessment = f"{label}: 완료된 반복이 없어요. 다시 시도해 보세요."
-        elif not issues_detail:
-            assessment = f"{label} {total}회 완료. 자세가 안정적이었어요!"
-        else:
-            top_msg = issues_detail[0]["message"]
-            assessment = (
-                f"{label} {total}회 완료 ({clean_reps}회 깔끔). "
-                f"'{top_msg}'가 가장 자주 보였어요. 아래 팁을 확인하세요."
-            )
+            return f"{label}: 완료된 반복이 없어요. 다시 시도해 보세요."
+        if not issues_detail:
+            return f"{label} {total}회 완료. 자세가 안정적이었어요!"
+        top_msg = issues_detail[0]["message"]
+        return (
+            f"{label} {total}회 완료 ({clean_reps}회 깔끔). "
+            f"'{top_msg}'가 가장 자주 보였어요. 아래 팁을 확인하세요."
+        )
 
+    def _summarize_exercise(self, exercise: str, st: ExerciseState) -> dict:
+        """현재 진행 중인 세트(누적 accumulator)의 요약. get_summary / live 모니터링용."""
+        total = st.counter.count
+        clean_reps = sum(1 for r in st.rep_records if not r["issues"])
+        issues_detail = self._issues_detail(st.issue_counts)
+        label = _EXERCISE_LABEL_KO.get(exercise, exercise)
         return {
             "count":        total,
             "cleanReps":    clean_reps,
@@ -192,7 +202,7 @@ class ExerciseSessionManager:
             "lastPosture":  st.last_posture,
             "issueCounts":  dict(st.issue_counts),
             "issuesDetail": issues_detail,
-            "assessment":   assessment,
+            "assessment":   self._assess(label, total, clean_reps, issues_detail),
             "repRecords":   list(st.rep_records),
         }
 
@@ -202,6 +212,89 @@ class ExerciseSessionManager:
             self._states.clear()
         else:
             self._states.pop(exercise, None)
+
+    # ──────────────────────────────────────────────────────────
+    # 3단계 피드백 (세트 → 운동 → 세션)
+    # ──────────────────────────────────────────────────────────
+    def end_set(self, exercise: str) -> dict:
+        """[1단계] 현재 세트를 마감한다.
+
+        현재 누적치를 세트 요약으로 스냅샷해 completed_sets 에 보관하고, 다음 세트를
+        위해 카운터·이슈 누적을 초기화한다. 마감된 세트 요약(setNumber 포함)을 반환.
+        """
+        st = self._get_or_create_state(exercise)
+        set_number = len(st.completed_sets) + 1
+        summary = self._summarize_exercise(exercise, st)
+        # 세트 단위 평가 문구로 덮어쓴다 ("스쿼트 1세트 ...")
+        label = _EXERCISE_LABEL_KO.get(exercise, exercise)
+        summary["assessment"] = self._assess(
+            f"{label} {set_number}세트",
+            summary["count"], summary["cleanReps"], summary["issuesDetail"],
+        )
+        set_record = {"setNumber": set_number, **summary}
+        st.completed_sets.append(set_record)
+        self._reset_current_set(exercise, st)
+        return set_record
+
+    def end_exercise(self, exercise: str) -> dict:
+        """[2단계] 한 운동의 모든 완료 세트를 집계한다.
+
+        마지막 세트 end_set 직후 호출하는 것을 전제하나, 진행 중 세트에 rep 이
+        남아 있으면(예: 직접 호출) 안전하게 먼저 마감한다.
+        """
+        st = self._get_or_create_state(exercise)
+        if st.counter.count > 0:            # 미마감 세트 flush (안전장치)
+            self.end_set(exercise)
+
+        sets = st.completed_sets
+        merged: dict[str, int] = {}
+        for s in sets:
+            for k, v in s["issueCounts"].items():
+                merged[k] = merged.get(k, 0) + v
+        total_reps  = sum(s["count"] for s in sets)
+        total_clean = sum(s["cleanReps"] for s in sets)
+        issues_detail = self._issues_detail(merged)
+        label = _EXERCISE_LABEL_KO.get(exercise, exercise)
+        return {
+            "exercise":     exercise,
+            "totalSets":    len(sets),
+            "totalReps":    total_reps,
+            "cleanReps":    total_clean,
+            "issueCounts":  merged,
+            "issuesDetail": issues_detail,
+            "assessment":   self._assess(f"{label} 전체", total_reps, total_clean, issues_detail),
+            "sets":         list(sets),
+        }
+
+    def end_session(self) -> dict:
+        """[3단계] 전체 운동 세션을 집계한다. 진행 중 세트가 남은 운동은 먼저 마감한다."""
+        exercises = {
+            ex: self.end_exercise(ex)
+            for ex, st in self._states.items()
+            if st.counter.count > 0 or st.completed_sets
+        }
+        total_reps = sum(e["totalReps"] for e in exercises.values())
+        n_ex = len(exercises)
+        assessment = (
+            "완료된 운동이 없어요."
+            if n_ex == 0
+            else f"운동 {n_ex}종목 · 총 {total_reps}회 완료. 수고하셨어요!"
+        )
+        return {
+            "sessionId":  self.session_id,
+            "startTime":  self.start_time.isoformat(),
+            "exercises":  exercises,
+            "assessment": assessment,
+        }
+
+    def _reset_current_set(self, exercise: str, st: ExerciseState) -> None:
+        """다음 세트를 위해 진행 중 누적치만 초기화(completed_sets 는 보존)."""
+        st.counter = make_rep_counter(exercise)
+        st.issue_counts = {}
+        st.rep_records = []
+        st._current_rep_issues = set()
+        st.last_feedback = ""
+        st.last_posture = ""
 
     # ──────────────────────────────────────────────────────────
     # 내부

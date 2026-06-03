@@ -72,9 +72,9 @@ moduflow_project/
     │   └── lunge/                  #   라벨별 하위 폴더 (good_up/good_down/front_knee_forward/trunk_lean/unknown_front_leg)
     └── src/
         ├── test_pose_8.py          # 8주차 로직 함수화 + 10주차 ExerciseRegistry + 11주차 RepCounter/LungeAnalyzer + 12주차 RepCounter 안정화/LivePoseSession(VIDEO) + 13주차 trunk_lean 수정/운동 4종(사레레·숄더프레스·풀업·싯업)
-        ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket) + 12주차 WS 연결단위 세션화(LivePoseSession + ExerciseSessionManager)
+        ├── pose_server.py          # 8주차 FastAPI 서버 (REST + WebSocket) + 12주차 WS 연결단위 세션화(LivePoseSession + ExerciseSessionManager) + 13주차 3단계 피드백 WS(set_end/session_end)
         ├── feedback_messages.py    # 10주차 한국어 메시지 dict + 12주차 COACHING_TIPS(종료 요약용 상세 코칭) + 13주차 운동 4종 메시지/팁
-        ├── session_state.py        # 11주차 ExerciseSessionManager + 12주차 get_summary 상세 코칭 확장 + 13주차 운동 4종 한국어 라벨
+        ├── session_state.py        # 11주차 ExerciseSessionManager + 12주차 get_summary 상세 코칭 확장 + 13주차 운동 4종 한국어 라벨/3단계 피드백(end_set·end_exercise·end_session)
         ├── test_analyze.py         # 9주차: analyze_pose 모듈 단독 테스트
         ├── test_client.py          # 9주차: REST + WebSocket 통합 테스트
         ├── live_client.py          # 9주차: 실시간 웹캠 → WebSocket 클라이언트
@@ -593,6 +593,26 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - **데드리프트**: 횟수(엉덩이 힌지)는 가능하나 핵심 큐인 **허리 굽음(척추 중립)** 은 MediaPipe pose에 척추 중간 랜드마크가 없어 검출 불가.
 - **벤치프레스**: 벤치에 **누운 자세 + 바/벤치 가림**이라 포즈 검출 자체가 불안정.
 - **플랭크**: **정적 버티기**라 rep이 없음 — RepCounter(반복 동작 전제)와 불일치. **hold-time + 자세 직선성(어깨-엉덩이-발목)** 의 별도 모드 필요.
+
+### 3단계 피드백 (세트 → 운동 → 세션)
+
+기존 `ExerciseSessionManager`는 운동별로 rep을 *연속* 누적할 뿐 **세트 개념이 없어** `get_summary()`가 세션 전체 1단계 요약만 제공했다. 운동 화면이 "세트 N/M" 단위로 진행되므로 **세션 → 운동 → 세트 → rep** 계층을 도입해 3단계 피드백을 만들었다.
+
+- **세트 경계는 Android 명시 신호로 결정** (서버는 rep을 끊김 없이 셀 뿐 세트 종료를 스스로 모름). "세트 종료" 버튼 → `set_end`, "운동 종료" 버튼 → `session_end`. **운동 종목 완료(2단계)는 별도 버튼 없이** `set_end` 의 `isLastSet:true` 로 판별(화면상 마지막 세트 4/4).
+- **데이터 구조**: `ExerciseState` 에 `completed_sets: list[dict]` 추가. 기존 `counter`/`issue_counts`/`rep_records` 는 이제 **현재 진행 중인 세트**의 누적치이며, `end_set` 시 그 시점 요약을 `completed_sets` 로 스냅샷하고 `_reset_current_set` 으로 초기화한다. 세트를 한 번도 안 끝내는 호출자(live_client 등)는 전체가 하나의 진행 중 세트처럼 동작 → `update()`/`get_summary()` 변경 없음(하위 호환).
+- **3단계 메서드** (`ExerciseSessionManager`):
+  - `end_set(ex)` — [1단계] 현재 세트 마감·스냅샷. 반환: `setNumber` + 그 세트 요약(`count`/`cleanReps`/`issueCounts`/`issuesDetail`/`assessment`/`repRecords`). 평가 문구는 "스쿼트 1세트 …" 범위로 생성.
+  - `end_exercise(ex)` — [2단계] 한 운동의 모든 완료 세트 롤업. 반환: `totalSets`/`totalReps`/`cleanReps`/병합 `issueCounts`/`issuesDetail`/`sets`(세트별 배열)/`assessment`("… 전체 …"). 진행 중 세트에 rep이 남아 있으면 안전하게 먼저 `end_set` flush.
+  - `end_session()` — [3단계] 운동별 `end_exercise` 롤업 + 전체 평가("운동 N종목 · 총 M회 완료 …"). 진행 중 세트가 남은 운동은 먼저 마감.
+  - 공용 헬퍼 `_issues_detail(issue_counts)`(횟수 내림차순 [{key,count,message,tip}]) + `_assess(label, total, clean, detail)`(범위 라벨만 바꿔 재사용)로 세트/운동/세션/실시간 요약이 같은 문구 로직을 공유.
+- **WS 프로토콜 확장** (`pose_server.py`):
+  - 수신: `{"type":"set_end", "exercise":..., "isLastSet":bool}`, `{"type":"session_end"}`
+  - 송신: `{"type":"set_feedback", "summary":{...}}` (항상) → `isLastSet` 이면 `{"type":"exercise_feedback","summary":{...}}` 추가 / `{"type":"session_feedback","summary":{...}}`
+  - `type` 값은 기존 `reset_ok` 선례대로 snake_case, **payload 내부 필드 키는 camelCase**(컨벤션은 JSON 키에만 적용, `type` 은 값). 모든 피드백 메시지가 `{type, summary}` 로 통일돼 Android 는 `summary` 만 파싱.
+  - 미지원 운동명 `set_end` → `{"type":"error"}` + 연결 유지.
+- **저장 분담**: FastAPI 는 3단계 문구·통계를 실시간 생성/반환만 하고, 누적 기록 영속화는 Android→Spring(REST ②). 연결 종료 시 상태 소멸(FastAPI 비영속). CLAUDE.md 분리 구조 준수.
+- 검증: 2운동×2세트 시뮬레이션에서 세트 번호·이슈 세트→운동 병합·세션 집계 정상, 기존 데이터셋 11/11 회귀 0.
+- **한계**: `live_client.py` 는 set_end/session_end 를 보내지 않으므로(로컬 웹캠 단순 모니터링) 3단계 흐름은 Android 로만 검증 가능. `test_client.py` 통합 테스트에도 아직 미추가.
 
 ## Conventions
 

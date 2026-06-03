@@ -11,14 +11,19 @@ JSON Key 는 camelCase (DB snake_case ↔ API camelCase 컨벤션).
                   "exercise": "squat"|"pushup" }
 
   WS /api/v1/ws  (연결 단위: VIDEO 모드 랜드마커 LivePoseSession + rep 카운트·이슈 통계 누적)
-    클라이언트 → 서버: { "type": "frame",   "image": "<base64>", "exercise": ... }
-                     { "type": "reset",   "exercise": ... }   # 생략 시 세션 전체 초기화
+    클라이언트 → 서버: { "type": "frame",    "image": "<base64>", "exercise": ... }
+                     { "type": "reset",    "exercise": ... }   # 생략 시 세션 전체 초기화
                      { "type": "summary" }
-    서버 → 클라이언트: { "type": "result",   "posture", "feedback", "angles", "issues",
-                                            "exercise", "count", "stage", "repCompleted" }
-                     { "type": "reset_ok", "exercise": ... }
-                     { "type": "summary",  "summary": {...} }
-                     { "type": "error",    "message": "..." }
+                     { "type": "set_end",  "exercise": ..., "isLastSet": bool }  # 세트 종료
+                     { "type": "session_end" }                                   # 전체 운동 종료
+    서버 → 클라이언트: { "type": "result",            "posture", "feedback", "angles", "issues",
+                                                     "exercise", "count", "stage", "repCompleted" }
+                     { "type": "reset_ok",          "exercise": ... }
+                     { "type": "summary",           "summary": {...} }
+                     { "type": "set_feedback",      "summary": {...} }  # 1단계: 직전 세트 요약
+                     { "type": "exercise_feedback", "summary": {...} }  # 2단계: 운동 전체(isLastSet 시)
+                     { "type": "session_feedback",  "summary": {...} }  # 3단계: 세션 전체
+                     { "type": "error",             "message": "..." }
 
 실행:
   uvicorn pose_server:app --host 0.0.0.0 --port 8000 --reload
@@ -248,6 +253,22 @@ async def ws_analyze(websocket: WebSocket):
             # ── 세션 요약 ────────────────────────────────────
             if msg_type == "summary":
                 await websocket.send_json({"type": "summary", "summary": session.get_summary()})
+                continue
+
+            # ── 세트 종료 (1단계, isLastSet 이면 2단계 운동 요약도) ──
+            if msg_type == "set_end":
+                ex = msg.get("exercise")
+                if ex not in EXERCISE_REGISTRY:
+                    await websocket.send_json({"type": "error", "message": MSG["unsupported_exercise"]})
+                    continue
+                await websocket.send_json({"type": "set_feedback", "summary": session.end_set(ex)})
+                if msg.get("isLastSet"):
+                    await websocket.send_json({"type": "exercise_feedback", "summary": session.end_exercise(ex)})
+                continue
+
+            # ── 전체 운동 종료 (3단계) ────────────────────────
+            if msg_type == "session_end":
+                await websocket.send_json({"type": "session_feedback", "summary": session.end_session()})
                 continue
 
             # ── 프레임 분석 ──────────────────────────────────
