@@ -509,10 +509,11 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
   - UP 상태: 최근 최대각(peak) 추적. 스무딩 각도가 `peak - drop_deg`(기본 25°) 이하로 내려가면 → DOWN 전환, valley 추적 시작.
   - DOWN 상태: 최근 최소각(valley) 추적. 스무딩 각도가 `valley + rise_deg`(기본 25°) 이상으로 올라가면 → UP 전환 + **count += 1** (골짜기 하나 = 1 rep).
   - 사람마다 ROM·기립 각도가 달라도 자동 적응. 한 rep 으로 인정되려면 최소 `drop_deg`만큼 내려갔다 `rise_deg`만큼 올라와야 하므로 작은 흔들림(< 25°)은 안 셈.
-- **중앙값 스무딩** — 최근 `smooth_window`개(기본 5) 평균 primary 각도의 **중앙값**을 작업 각도로 사용. 단발 스파이크 제거.
-- **전환 디바운스** — 전환 조건(하강/복귀)이 `debounce_frames`개(기본 2) 연속될 때만 확정. 1~2프레임 글리치 무시.
+- **중앙값 스무딩** — 최근 `smooth_window`개(기본 3) 평균 primary 각도의 **중앙값**을 작업 각도로 사용. 단발 스파이크 제거.
+- **전환 디바운스** — 전환 조건(하강/복귀)이 `debounce_frames`개(기본 1) 연속될 때만 확정. 글리치 무시.
 - `RepCounter.stage`는 `"UP"`/`"DOWN"`만 가짐(MID 없음). 관절 미검출(`angles` 비거나 키 없음) 프레임은 버퍼/추적 상태를 건드리지 않고 현 상태 통과.
-- 생성: `RepCounter(primary_angle_keys, drop_deg=25, rise_deg=25, smooth_window=5, debounce_frames=2)`. `make_rep_counter(exercise)`는 분석기의 `primary_angle_keys`만 끌어와 기본값으로 생성. `SquatCounter`(8주차 호환 래퍼)도 동일. **`up_thr`/`down_thr`는 더 이상 `RepCounter`가 쓰지 않는다** — 분석기 클래스 속성으로 남아 *분석기 내부의 form-check 게이팅*에만 쓰임.
+- 생성: `RepCounter(primary_angle_keys, drop_deg=25, rise_deg=25, smooth_window=3, debounce_frames=1)`. `make_rep_counter(exercise)`는 분석기의 `primary_angle_keys`만 끌어와 기본값으로 생성. `SquatCounter`(8주차 호환 래퍼)도 동일. **`up_thr`/`down_thr`는 더 이상 `RepCounter`가 쓰지 않는다** — 분석기 클래스 속성으로 남아 *분석기 내부의 form-check 게이팅*에만 쓰임.
+- **14주차 반응속도 튜닝**: `smooth_window` 5→3, `debounce_frames` 2→1 로 낮춰 rep 확정 지연을 약 2프레임 단축(숫자가 더 빨리 오름). drop/rise(25°)는 유지 — 어떤 동작을 rep 으로 인정할지(오탐 방지)는 그대로 두고 *확정 속도*만 빠르게 함.
 - **부작용/한계**: 스무딩+디바운스로 rep 확정이 약 0.5~1초(클라이언트 fps에 비례) 지연 — rep 2~4초 기준 무방, 0.5초 미만 초고속 반복은 누락 가능(의도된 동작). **분석기의 form-check 게이팅은 여전히 고정 `down_thr`** — 즉 얕은 squat(예: 130°)은 *카운트*는 되지만 down_thr(120°) 미만이 아니라 *폼 검사*는 안 됨(realtime feedback 이 "준비 자세를 잡으세요"로 남을 수 있음). 폼 검사까지 적응시키려면 별도 작업 필요.
 
 ### 실시간 안정화: VIDEO 모드 + 연결별 분석기 (LivePoseSession)
@@ -613,6 +614,14 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - **저장 분담**: FastAPI 는 3단계 문구·통계를 실시간 생성/반환만 하고, 누적 기록 영속화는 Android→Spring(REST ②). 연결 종료 시 상태 소멸(FastAPI 비영속). CLAUDE.md 분리 구조 준수.
 - 검증: 2운동×2세트 시뮬레이션에서 세트 번호·이슈 세트→운동 병합·세션 집계 정상, 기존 데이터셋 11/11 회귀 0.
 - **한계**: `live_client.py` 는 set_end/session_end 를 보내지 않으므로(로컬 웹캠 단순 모니터링) 3단계 흐름은 Android 로만 검증 가능. `test_client.py` 통합 테스트에도 아직 미추가.
+
+### 14주차 실시간 피드백 throttle (메시지 깜빡임 완화)
+
+실시간 `result.feedback` 는 매 프레임 분석기가 새로 생성하므로, 자세가 임계값 근처에서 흔들리면 문구가 매 프레임 바뀌어(좋은 자세↔교정) 깜빡였다. `ExerciseSessionManager.update()` 가 **표시용 피드백을 `feedback_hold_frames`(기본 12) 동안 유지**한 뒤에만 새 문구로 교체하도록 throttle 을 추가했다.
+- `ExerciseState._disp_feedback`/`_disp_hold` 로 운동별 표시 상태 보존. `end_set`(`_reset_current_set`) 시 함께 초기화.
+- **`issues` 통계는 매 프레임 그대로 누적** → `issue_counts`/세트·운동·세션 요약 정확도엔 영향 없음. throttle 은 *표시 문구*에만 적용.
+- `feedback_hold_frames=0` 이면 throttle 끔(매 프레임 갱신, 기존 동작). 클라이언트 fps 기준 대략 `frames/fps` 초 유지.
+- WS 경로(`pose_server.py`)와 `live_client.py` 모두 `ExerciseSessionManager` 를 통하므로 동일 적용. 단발 REST `/analyze` 는 매니저를 안 거쳐 그대로 per-frame.
 
 ## Conventions
 

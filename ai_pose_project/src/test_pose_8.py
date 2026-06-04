@@ -180,7 +180,7 @@ class RepCounter:
     """
     def __init__(self, primary_angle_keys: list[str],
                  drop_deg: float = 25.0, rise_deg: float = 25.0,
-                 smooth_window: int = 5, debounce_frames: int = 2):
+                 smooth_window: int = 3, debounce_frames: int = 1):
         self.keys = list(primary_angle_keys)
         self.drop_deg = drop_deg
         self.rise_deg = rise_deg

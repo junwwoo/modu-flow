@@ -57,6 +57,8 @@ class ExerciseState:
     last_posture:   str = ""
     completed_sets: list[dict]     = field(default_factory=list)   # 종료된 세트별 요약 스냅샷 (1단계)
     _current_rep_issues: set[str]  = field(default_factory=set)
+    _disp_feedback: str = ""        # 실시간 표시용 피드백(throttle 적용) — 매 프레임 안 바뀜
+    _disp_hold:     int = 0         # 현재 표시 메시지를 더 유지할 남은 프레임 수
 
 
 class ExerciseSessionManager:
@@ -79,10 +81,14 @@ class ExerciseSessionManager:
         summary = sm.get_summary()
     """
 
-    def __init__(self, session_id: Optional[str] = None) -> None:
+    def __init__(self, session_id: Optional[str] = None,
+                 feedback_hold_frames: int = 12) -> None:
         self.start_time = datetime.now()
         self.session_id = session_id or f"sess-{self.start_time.strftime('%Y%m%d_%H%M%S')}"
         self._states: dict[str, ExerciseState] = {}
+        # 실시간 피드백 throttle: 표시 메시지를 최소 이 프레임 수만큼 유지한 뒤에만 교체.
+        # 클라이언트 fps 기준 대략 (frames / fps)초. 0 이면 매 프레임 갱신(throttle 끔).
+        self.feedback_hold_frames = max(0, feedback_hold_frames)
 
     # ──────────────────────────────────────────────────────────
     # 핵심 API
@@ -127,10 +133,22 @@ class ExerciseSessionManager:
             })
             state._current_rep_issues.clear()
 
-        state.last_feedback = result.get("feedback", "")
+        # 실시간 피드백 throttle — 매 프레임 새 문구로 갱신하면 메시지가 깜빡이므로,
+        # 현재 표시 메시지를 feedback_hold_frames 동안 유지한 뒤에만 새 문구로 교체한다.
+        # issues 통계는 위에서 매 프레임 그대로 누적했으므로 요약 정확도엔 영향 없음.
+        raw_feedback = result.get("feedback", "")
+        if state._disp_hold > 0 and state._disp_feedback:
+            state._disp_hold -= 1
+        else:
+            state._disp_feedback = raw_feedback
+            state._disp_hold = self.feedback_hold_frames
+        display_feedback = state._disp_feedback
+
+        state.last_feedback = display_feedback
         state.last_posture  = result.get("posture", "")
 
         enriched = dict(result)
+        enriched["feedback"]     = display_feedback
         enriched["count"]        = count
         enriched["stage"]        = stage
         enriched["repCompleted"] = rep_completed
@@ -295,6 +313,8 @@ class ExerciseSessionManager:
         st._current_rep_issues = set()
         st.last_feedback = ""
         st.last_posture = ""
+        st._disp_feedback = ""
+        st._disp_hold = 0
 
     # ──────────────────────────────────────────────────────────
     # 내부
