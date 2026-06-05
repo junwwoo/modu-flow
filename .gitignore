@@ -3,6 +3,9 @@ venv/
 __pycache__/
 *.pyc
 
+# 로그 / 임시 산출물 (테스트 중 생성)
+*.log
+
 # MediaPipe model (large binary)
 *.task
 

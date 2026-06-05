@@ -63,7 +63,7 @@ def _build_prompt(summary: dict) -> str:
     return "\n".join(lines)
 
 
-def generate_session_narrative(summary: dict, *, max_output_tokens: int = 400) -> Optional[str]:
+def generate_session_narrative(summary: dict, *, max_output_tokens: int = 600) -> Optional[str]:
     """세션 요약 dict → Gemini 자연어 총평. 실패 시 None(호출자가 템플릿 폴백).
 
     동기 함수(네트워크 I/O). 호출자가 asyncio.to_thread + wait_for 로 감싸 타임아웃을 건다.
@@ -84,14 +84,19 @@ def generate_session_narrative(summary: dict, *, max_output_tokens: int = 400) -
     try:
         client = genai.Client(api_key=key)
         model = os.environ.get("GEMINI_MODEL", _DEFAULT_MODEL)
+        # gemini-2.5-flash 는 thinking 모델 — 짧은 총평엔 사고 과정이 불필요하고
+        # thinking 토큰이 출력 예산을 먹어 응답이 잘리므로 thinking_budget=0 으로 끈다.
+        cfg = types.GenerateContentConfig(
+            system_instruction=_SYSTEM_INSTRUCTION,
+            temperature=0.7,
+            max_output_tokens=max_output_tokens,
+        )
+        try:
+            cfg.thinking_config = types.ThinkingConfig(thinking_budget=0)
+        except Exception:
+            pass  # thinking 미지원 모델/SDK 면 무시
         resp = client.models.generate_content(
-            model=model,
-            contents=_build_prompt(summary),
-            config=types.GenerateContentConfig(
-                system_instruction=_SYSTEM_INSTRUCTION,
-                temperature=0.7,
-                max_output_tokens=max_output_tokens,
-            ),
+            model=model, contents=_build_prompt(summary), config=cfg,
         )
         text = (resp.text or "").strip()
         return text or None
