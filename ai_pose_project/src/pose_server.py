@@ -22,7 +22,7 @@ JSON Key 는 camelCase (DB snake_case ↔ API camelCase 컨벤션).
                      { "type": "summary",           "summary": {...} }
                      { "type": "set_feedback",      "summary": {...} }  # 1단계: 직전 세트 요약
                      { "type": "exercise_feedback", "summary": {...} }  # 2단계: 운동 전체(isLastSet 시)
-                     { "type": "session_feedback",  "summary": {...} }  # 3단계: 세션 전체
+                     { "type": "session_feedback",  "summary": {... "aiSummary"? } }  # 3단계: 세션 전체(+Gemini 총평, 옵션)
                      { "type": "error",             "message": "..." }
 
 실행:
@@ -33,6 +33,7 @@ import base64
 import binascii
 import io
 import logging
+import os
 
 import cv2
 import numpy as np
@@ -49,6 +50,10 @@ from test_pose_8 import (
 )
 from session_state import ExerciseSessionManager
 from feedback_messages import MESSAGES as MSG
+from ai_summary import generate_session_narrative
+
+# 세션 종료 AI 총평(Gemini)의 최대 대기 시간(초). 초과 시 템플릿 폴백.
+AI_SUMMARY_TIMEOUT = float(os.environ.get("AI_SUMMARY_TIMEOUT", "8"))
 
 logger = logging.getLogger("pose_server")
 logging.basicConfig(level=logging.INFO)
@@ -268,7 +273,20 @@ async def ws_analyze(websocket: WebSocket):
 
             # ── 전체 운동 종료 (3단계) ────────────────────────
             if msg_type == "session_end":
-                await websocket.send_json({"type": "session_feedback", "summary": session.end_session()})
+                summary = session.end_session()
+                # AI 총평(Gemini) — 통계 근거 자연어 요약. 키 없음/실패/타임아웃이면
+                # None → summary["aiSummary"] 생략, 클라이언트는 기존 assessment 사용.
+                try:
+                    narrative = await asyncio.wait_for(
+                        asyncio.to_thread(generate_session_narrative, summary),
+                        timeout=AI_SUMMARY_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("AI 요약 타임아웃(%.0fs) → 템플릿 폴백", AI_SUMMARY_TIMEOUT)
+                    narrative = None
+                if narrative:
+                    summary["aiSummary"] = narrative
+                await websocket.send_json({"type": "session_feedback", "summary": summary})
                 continue
 
             # ── 프레임 분석 ──────────────────────────────────

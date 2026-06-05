@@ -8,3 +8,4 @@ mediapipe==0.10.32
 numpy==2.2.6
 opencv-contrib-python==4.13.0.92
 pillow==12.1.1
+google-genai>=1.0.0                 # 세션 종료 AI 총평(Gemini). 옵션 — 키(GEMINI_API_KEY) 없으면 코드가 자동 폴백

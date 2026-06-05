@@ -624,6 +624,18 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - `feedback_hold_frames=0` 이면 throttle 끔(매 프레임 갱신, 기존 동작). 클라이언트 fps 기준 대략 `frames/fps` 초 유지.
 - WS 경로(`pose_server.py`)와 `live_client.py` 모두 `ExerciseSessionManager` 를 통하므로 동일 적용. 단발 REST `/analyze` 는 매니저를 안 거쳐 그대로 per-frame.
 
+### 14주차 세션 종료 AI 총평 (Gemini, 옵션)
+
+세션 종료(3단계) 요약의 템플릿 `assessment` 에 더해, **Gemini 로 자연어 총평**을 생성해 `summary["aiSummary"]` 로 함께 보낸다. `src/ai_summary.py` 의 `generate_session_narrative(summary)`.
+
+- **세션 종료에만** 적용(운동당 1회 — 저빈도). 실시간 per-frame 피드백엔 LLM 안 씀(지연·비용·짧은 문구엔 과함).
+- **통계 근거(grounding)**: `end_session()` 이 계산한 운동·세트·이슈 통계만 한국어 블록으로 만들어 전달하고, "이 수치 안에서만 말하라"고 시스템 지시로 제약 → 검출 안 된 자세 조언 할루시네이션 방지.
+- **graceful degradation**: 키 없음(`GEMINI_API_KEY`/`GOOGLE_API_KEY`) · `google-genai` 미설치 · API 오류 · 타임아웃(`AI_SUMMARY_TIMEOUT`, 기본 8s) → `None` 반환 → `aiSummary` 생략, 클라이언트는 기존 `assessment` 사용. **세션 종료가 절대 안 깨진다.**
+- `pose_server.py` 의 `session_end` 핸들러가 `asyncio.to_thread(generate_session_narrative)` + `wait_for(timeout)` 로 감싼다(동기 SDK 호출을 이벤트 루프 밖으로, 느린 API 가 WS 를 막지 않게).
+- 환경 변수: `GEMINI_API_KEY`(또는 `GOOGLE_API_KEY`) 필수, `GEMINI_MODEL`(기본 `gemini-2.5-flash`), `AI_SUMMARY_TIMEOUT`(기본 8). Cloud Run 배포 시 키를 환경변수/시크릿으로 주입해야 활성화됨(미주입이면 자동 폴백).
+- 제공자: **Gemini**(Google) — Claude 가 아니므로 `claude-api` 스킬 대상 아님. `requirements.txt` 에 `google-genai` 추가(옵션 — 키 없으면 코드가 import 실패해도 폴백).
+- 스코프 주의: FastAPI 는 총평 **문구 생성**만(AI 추론 도메인). 저장은 Android→Spring. `aiSummary` 도 다른 요약 필드처럼 Android 가 받아 저장/표시(원하면 TTS 로 읽기)하면 됨.
+
 ## Conventions
 
 - 언어: 한국어 주석 사용 / 한국어 피드백 메시지 (10주차 전환)
