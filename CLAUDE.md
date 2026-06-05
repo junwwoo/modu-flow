@@ -64,6 +64,7 @@ moduflow_project/
     ├── test_images/                # 9~11주차: 테스트 데이터셋
     │   ├── _generate.py            #   더미 이미지 생성기 (blank/noise/stick)
     │   ├── _capture.py             #   웹캠 1프레임 캡처 헬퍼
+    │   ├── _extract.py             #   14주차: 영상→라벨별 프레임 자동 추출 (A 방식: 영상=라벨, stage 극점 자동 선택+manifest 기입)
     │   ├── README.md               #   11주차: 폴더 구조·파일명 컨벤션·촬영 가이드
     │   ├── manifest.csv            #   11주차: 그라운드 트루스 (file_path/exercise/label/expected_*)
     │   ├── _generic/               #   사람 미검출 케이스 (blank/noise/stick)
