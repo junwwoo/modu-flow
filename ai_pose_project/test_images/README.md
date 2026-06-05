@@ -29,6 +29,22 @@ test_images/
 │   ├── front_knee_forward/  # lunge.front_knee_forward
 │   ├── trunk_lean/          # lunge.trunk_lean
 │   └── unknown_front_leg/   # lunge.unknown_front_leg (앞다리 식별 실패 — 정면 촬영/직립 모호)
+├── lateral_raise/          # 사레레 (13주차, 정면 촬영 권장)
+│   ├── good_up/            # 시작 자세 (팔 내림)
+│   ├── good_down/          # 정점 (팔 어깨높이까지, 정상)
+│   ├── asymmetry/          # lateral_raise.asymmetry (좌우 팔 높이 차)
+│   └── arms_too_high/      # lateral_raise.arms_too_high (손목이 어깨보다 위로)
+├── shoulder_press/         # 숄더프레스 (13주차, 정면)
+│   ├── good_up/            # 시작 자세 (팔꿈치 굽힘)
+│   ├── good_down/          # 정점 (머리 위 신전, 정상)
+│   └── asymmetry/          # shoulder_press.asymmetry (좌우 팔 높이 차)
+├── pullup/                 # 풀업 (13주차, 정면)
+│   ├── good_up/            # 매달린 시작 (팔 폄)
+│   ├── good_down/          # 끌어올린 정점 (정상)
+│   └── asymmetry/          # pullup.asymmetry (좌우 당김 차)
+├── situp/                  # 싯업 (13주차, 측면) — 보수적: fault 폴더 없음(횟수+안내만)
+│   ├── good_up/            # 누운 시작 자세
+│   └── good_down/          # 일어난 정점 (정상)
 └── manifest.csv
 ```
 
@@ -93,9 +109,11 @@ test_images/
 - 운동자의 정중선이 카메라에서 보았을 때 90°가 되도록
 - **런지의 앞다리 식별은 측면 촬영에서 Z(깊이)가 선결 정보** — 정면이면 Z·Y 모두 ambiguous로 빠져 `unknown_front_leg`가 트리거되므로, 식별 실패 케이스를 제외하면 반드시 측면에서 촬영한다
 
-### 정면(front) 촬영 — `camera_angle` 검증용
+### 정면(front) 촬영 — `camera_angle` 검증용 + 상체 운동
 - 운동자가 카메라를 정면으로 바라보는 자세 (얼굴이 카메라 향함)
 - pushup의 `camera_angle` 케이스 또는 squat의 기립 자세에서 사용
+- **사레레·숄더프레스·풀업(13주차)**: 좌우 비대칭(`asymmetry`)·과도 거상(`arms_too_high`)이 정면에서 잘 보이므로 정면 촬영 권장. **싯업은 엉덩이각(어깨-엉덩이-무릎) 기준이라 측면(side)** 촬영
+- 상체 운동에서 팔을 머리 위로 뻗으면(숄더프레스·풀업) 손목이 화면 상단을 벗어나 visibility 게이트가 걸릴 수 있으니, 전신이 프레임에 들어오도록 거리 확보
 
 ### 라벨링 원칙
 - **good_up**: stage가 UP일 때 자세에 이슈가 없는 정상 케이스 (기립 또는 팔꿈치 신전)
@@ -117,8 +135,15 @@ test_images/
 
 - `_generate.py` — 더미 이미지 3종 자동 생성 (이미 `_generic/`에 마이그레이션됨)
 - `_capture.py` — 웹캠으로 한 프레임씩 캡처 (SPACE 저장 / ESC 종료)
+- `_extract.py` — **(14주차) 영상→라벨별 프레임 자동 추출**. 영상 1개 = 라벨 1개 전제로, 동작의 stage 극점(바닥/정점) 프레임을 자동으로 골라 `<exercise>/<label>/` 에 저장하고 manifest 행까지 기입. 라벨(good/fault)만 사람이 `--label`로 지정.
+  ```
+  python _extract.py squat_lean.mp4 --exercise squat --label trunk_lean --view side --member m1
+  python _extract.py la_normal.mp4  --exercise lateral_raise --label good_down --view front --member m2
+  python _extract.py clip.mp4 --exercise pushup --label hip_sag --view side --member m1 --dry-run   # 미리보기
+  ```
+  저장 시 분석기 예측을 `✓/✗`로 함께 출력(임계값 튜닝 힌트, 라벨 판정용 아님). 세로 폰 영상은 `--rotate 90`.
 
-## 진행 현황 (2026-05-08)
+## 진행 현황 (2026-06-06)
 
 | 운동 | 라벨 | 보유 표본 | 목표 |
 |---|---|---|---|
@@ -138,4 +163,18 @@ test_images/
 | lunge | front_knee_forward | 0 | 4 |
 | lunge | trunk_lean | 0 | 4 |
 | lunge | unknown_front_leg | 0 | 2 |
+| lateral_raise | good_up | 0 | 4 |
+| lateral_raise | good_down | 0 | 4 |
+| lateral_raise | asymmetry | 0 | 4 |
+| lateral_raise | arms_too_high | 0 | 4 |
+| shoulder_press | good_up | 0 | 4 |
+| shoulder_press | good_down | 0 | 4 |
+| shoulder_press | asymmetry | 0 | 4 |
+| pullup | good_up | 0 | 4 |
+| pullup | good_down | 0 | 4 |
+| pullup | asymmetry | 0 | 4 |
+| situp | good_up | 0 | 4 |
+| situp | good_down | 0 | 4 |
 | _generic | not_detected | 3 | 3 |
+
+> trunk_lean 잠정값(`TRUNK_LEAN_RATIO=0.5`)·신규 4종 임계값은 미튜닝 — 위 표본이 채워지면 `test_dataset.py`로 검증·튜닝한다.
