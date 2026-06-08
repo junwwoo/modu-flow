@@ -51,11 +51,11 @@ MANIFEST_COLS = ["file_path", "exercise", "label", "expected_posture",
                  "expected_issue_key", "expected_stage", "view", "member", "notes"]
 
 # 각 운동의 "active(폼 검사가 의미있는) 포즈"가 primary 각도의 최소(low)인지 최대(high)인지.
-#   squat/pushup/lunge: 바닥(굽힘) = 최소각.  lateral_raise/shoulder_press: 든 상태 = 최대각.
+#   squat/pushup/lunge: 바닥(굽힘) = 최소각.  lateralraise/shoulderpress: 든 상태 = 최대각.
 #   pullup/situp: 정점(굽힘/말림) = 최소각.
 ACTIVE_EXTREME = {
     "squat": "low", "pushup": "low", "lunge": "low",
-    "lateral_raise": "high", "shoulder_press": "high",
+    "lateralraise": "high", "shoulderpress": "high",
     "pullup": "low", "situp": "low",
 }
 # 폼 검사가 DOWN 단계 게이팅인 운동 (manifest expected_stage 채움용)

@@ -45,8 +45,8 @@ MediaPipe PoseLandmarker 기반 **실시간 운동 자세 분석 서버**.
 | 하체 | `squat` 스쿼트 | 무릎 넘김 · 상체 숙임 · 좌우 비대칭 |
 | 하체 | `lunge` 런지 | 앞무릎 넘김 · 상체 숙임 · 앞다리 식별 |
 | 상체 | `pushup` 푸시업 | 엉덩이 처짐/솟음 · 정면 촬영 감지 |
-| 상체 | `lateral_raise` 사레레 | 좌우 비대칭 · 과도 거상 |
-| 상체 | `shoulder_press` 숄더프레스 | 좌우 비대칭 |
+| 상체 | `lateralraise` 사레레 | 좌우 비대칭 · 과도 거상 |
+| 상체 | `shoulderpress` 숄더프레스 | 좌우 비대칭 |
 | 상체 | `pullup` 풀업 | 좌우 비대칭 |
 | 코어 | `situp` 싯업 | (횟수 + 안내) |
 

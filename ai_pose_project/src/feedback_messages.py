@@ -42,15 +42,15 @@ MESSAGES = {
     "lunge.knee_asymmetry":      "양쪽 균형을 맞추세요",
 
     # ───── Lateral raise (사레레, 13주차) ─────
-    "lateral_raise.asymmetry":     "양팔 높이를 맞추세요",
-    "lateral_raise.arms_too_high": "어깨 높이까지만 올리세요",
-    "lateral_raise.good_form":     "좋은 자세예요",
-    "lateral_raise.standby":       "준비 자세를 잡으세요",
+    "lateralraise.asymmetry":     "양팔 높이를 맞추세요",
+    "lateralraise.arms_too_high": "어깨 높이까지만 올리세요",
+    "lateralraise.good_form":     "좋은 자세예요",
+    "lateralraise.standby":       "준비 자세를 잡으세요",
 
     # ───── Shoulder press (숄더프레스, 13주차) ─────
-    "shoulder_press.asymmetry": "양팔 높이를 맞추세요",
-    "shoulder_press.good_form": "좋은 자세예요",
-    "shoulder_press.standby":   "준비 자세를 잡으세요",
+    "shoulderpress.asymmetry": "양팔 높이를 맞추세요",
+    "shoulderpress.good_form": "좋은 자세예요",
+    "shoulderpress.standby":   "준비 자세를 잡으세요",
 
     # ───── Pull-up (풀업, 13주차) ─────
     "pullup.asymmetry": "양팔을 고르게 당기세요",
@@ -93,10 +93,10 @@ COACHING_TIPS = {
     "lunge.front_foot_lift":     "앞발 뒤꿈치가 들리지 않게 발바닥 전체로 바닥을 누르며 일어나세요. 뒤꿈치가 들리면 추진력이 약해집니다.",
     "lunge.knee_asymmetry":      "좌우 반복의 깊이가 다릅니다. 보폭을 일정하게 하고 거울이나 영상으로 양쪽을 비교해 보세요.",
     # ───── Lateral raise (13주차) ─────
-    "lateral_raise.asymmetry":     "양팔을 같은 속도로 같은 높이까지 들어 올리세요. 한쪽이 높으면 어깨 발달이 불균형해집니다.",
-    "lateral_raise.arms_too_high": "팔을 어깨 높이까지만 들어 올리세요. 그 이상 올리면 승모근이 개입해 어깨 자극이 분산됩니다.",
+    "lateralraise.asymmetry":     "양팔을 같은 속도로 같은 높이까지 들어 올리세요. 한쪽이 높으면 어깨 발달이 불균형해집니다.",
+    "lateralraise.arms_too_high": "팔을 어깨 높이까지만 들어 올리세요. 그 이상 올리면 승모근이 개입해 어깨 자극이 분산됩니다.",
     # ───── Shoulder press (13주차) ─────
-    "shoulder_press.asymmetry": "양팔을 동시에 같은 높이로 밀어 올리세요. 한쪽이 먼저 올라가면 어깨·허리에 비대칭 부담이 갑니다.",
+    "shoulderpress.asymmetry": "양팔을 동시에 같은 높이로 밀어 올리세요. 한쪽이 먼저 올라가면 어깨·허리에 비대칭 부담이 갑니다.",
     # ───── Pull-up (13주차) ─────
     "pullup.asymmetry": "양팔로 고르게 몸을 끌어올리세요. 한쪽에 치우치면 광배근 발달이 불균형해지고 부상 위험이 있습니다.",
 }

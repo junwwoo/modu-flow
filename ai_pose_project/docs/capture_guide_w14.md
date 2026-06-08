@@ -87,7 +87,7 @@
 | 토큰 | 값 |
 |---|---|
 | 멤버 | `m1`(박준우) `m2`(이경민) `m3`(임용완) `m4`(정주영) |
-| 운동 | `squat` `lunge` `pushup` `lateral_raise` `shoulder_press` `pullup` `situp` |
+| 운동 | `squat` `lunge` `pushup` `lateralraise` `shoulderpress` `pullup` `situp` |
 | 라벨 | 위 목록의 괄호 안 영문 (`good` `trunk_lean` `asymmetry` ...) |
 | 각도 | `side` 또는 `front` |
 
@@ -95,7 +95,7 @@
 ```
 m2_squat_good_side.mp4
 m2_squat_trunk_lean_side.mp4
-m3_lateral_raise_asymmetry_front.mp4
+m3_lateralraise_asymmetry_front.mp4
 m4_situp_good_side.mp4
 ```
 

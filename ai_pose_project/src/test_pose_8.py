@@ -913,7 +913,7 @@ class LateralRaiseAnalyzer:
 
     primary = 어깨 외전각(hip-shoulder-elbow): 팔 내림 ~15°, 팔 옆으로 듦 ~90°.
     """
-    name = "lateral_raise"
+    name = "lateralraise"
     up_thr             = 80   # 팔을 든 상태(외전각 큼) = active/top
     down_thr           = 30   # 팔을 내린 상태
     primary_angle_keys = ["left_shoulder", "right_shoulder"]
@@ -944,7 +944,7 @@ class LateralRaiseAnalyzer:
         if avg_sho_y - avg_wrist_y > LATERAL_RAISE_OVERRAISE_MARGIN:
             issues.append("arms_too_high")
 
-        return _form_result("lateral_raise", angles, issues, active)
+        return _form_result("lateralraise", angles, issues, active)
 
 
 class ShoulderPressAnalyzer:
@@ -953,7 +953,7 @@ class ShoulderPressAnalyzer:
     primary = 팔꿈치각: 시작(귀 옆) ~90°, 머리 위 완전히 폄 ~170°.
     팔을 머리 위로 뻗으므로 손목이 화면 상단을 벗어나면 visibility 게이트가 걸릴 수 있다(정상).
     """
-    name = "shoulder_press"
+    name = "shoulderpress"
     up_thr             = 160  # 팔 완전히 폄(머리 위) = active/top
     down_thr           = 90   # 팔꿈치 굽힌 시작 자세
     primary_angle_keys = ["left_elbow", "right_elbow"]
@@ -978,7 +978,7 @@ class ShoulderPressAnalyzer:
         if abs(angle_le - angle_re) > SHOULDER_PRESS_ASYMMETRY_DEG:
             issues.append("asymmetry")
 
-        return _form_result("shoulder_press", angles, issues, active)
+        return _form_result("shoulderpress", angles, issues, active)
 
 
 class PullupAnalyzer:
@@ -1067,8 +1067,8 @@ EXERCISE_REGISTRY: dict[str, ExerciseAnalyzer] = {
     "squat":          SquatAnalyzer(),
     "pushup":         PushupAnalyzer(),
     "lunge":          LungeAnalyzer(),
-    "lateral_raise":  LateralRaiseAnalyzer(),
-    "shoulder_press": ShoulderPressAnalyzer(),
+    "lateralraise":  LateralRaiseAnalyzer(),
+    "shoulderpress": ShoulderPressAnalyzer(),
     "pullup":         PullupAnalyzer(),
     "situp":          SitupAnalyzer(),
 }

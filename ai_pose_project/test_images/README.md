@@ -29,15 +29,15 @@ test_images/
 │   ├── front_knee_forward/  # lunge.front_knee_forward
 │   ├── trunk_lean/          # lunge.trunk_lean
 │   └── unknown_front_leg/   # lunge.unknown_front_leg (앞다리 식별 실패 — 정면 촬영/직립 모호)
-├── lateral_raise/          # 사레레 (13주차, 정면 촬영 권장)
+├── lateralraise/          # 사레레 (13주차, 정면 촬영 권장)
 │   ├── good_up/            # 시작 자세 (팔 내림)
 │   ├── good_down/          # 정점 (팔 어깨높이까지, 정상)
-│   ├── asymmetry/          # lateral_raise.asymmetry (좌우 팔 높이 차)
-│   └── arms_too_high/      # lateral_raise.arms_too_high (손목이 어깨보다 위로)
-├── shoulder_press/         # 숄더프레스 (13주차, 정면)
+│   ├── asymmetry/          # lateralraise.asymmetry (좌우 팔 높이 차)
+│   └── arms_too_high/      # lateralraise.arms_too_high (손목이 어깨보다 위로)
+├── shoulderpress/         # 숄더프레스 (13주차, 정면)
 │   ├── good_up/            # 시작 자세 (팔꿈치 굽힘)
 │   ├── good_down/          # 정점 (머리 위 신전, 정상)
-│   └── asymmetry/          # shoulder_press.asymmetry (좌우 팔 높이 차)
+│   └── asymmetry/          # shoulderpress.asymmetry (좌우 팔 높이 차)
 ├── pullup/                 # 풀업 (13주차, 정면)
 │   ├── good_up/            # 매달린 시작 (팔 폄)
 │   ├── good_down/          # 끌어올린 정점 (정상)
@@ -138,7 +138,7 @@ test_images/
 - `_extract.py` — **(14주차) 영상→라벨별 프레임 자동 추출**. 영상 1개 = 라벨 1개 전제로, 동작의 stage 극점(바닥/정점) 프레임을 자동으로 골라 `<exercise>/<label>/` 에 저장하고 manifest 행까지 기입. 라벨(good/fault)만 사람이 `--label`로 지정.
   ```
   python _extract.py squat_lean.mp4 --exercise squat --label trunk_lean --view side --member m1
-  python _extract.py la_normal.mp4  --exercise lateral_raise --label good_down --view front --member m2
+  python _extract.py la_normal.mp4  --exercise lateralraise --label good_down --view front --member m2
   python _extract.py clip.mp4 --exercise pushup --label hip_sag --view side --member m1 --dry-run   # 미리보기
   ```
   저장 시 분석기 예측을 `✓/✗`로 함께 출력(임계값 튜닝 힌트, 라벨 판정용 아님). 세로 폰 영상은 `--rotate 90`.
@@ -163,13 +163,13 @@ test_images/
 | lunge | front_knee_forward | 0 | 4 |
 | lunge | trunk_lean | 0 | 4 |
 | lunge | unknown_front_leg | 0 | 2 |
-| lateral_raise | good_up | 0 | 4 |
-| lateral_raise | good_down | 0 | 4 |
-| lateral_raise | asymmetry | 0 | 4 |
-| lateral_raise | arms_too_high | 0 | 4 |
-| shoulder_press | good_up | 0 | 4 |
-| shoulder_press | good_down | 0 | 4 |
-| shoulder_press | asymmetry | 0 | 4 |
+| lateralraise | good_up | 0 | 4 |
+| lateralraise | good_down | 0 | 4 |
+| lateralraise | asymmetry | 0 | 4 |
+| lateralraise | arms_too_high | 0 | 4 |
+| shoulderpress | good_up | 0 | 4 |
+| shoulderpress | good_down | 0 | 4 |
+| shoulderpress | asymmetry | 0 | 4 |
 | pullup | good_up | 0 | 4 |
 | pullup | good_down | 0 | 4 |
 | pullup | asymmetry | 0 | 4 |

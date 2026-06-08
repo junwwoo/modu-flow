@@ -578,8 +578,8 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 
 | 운동 (키) | primary_angle_keys | active(정점) | 보수적 폼 검사 |
 |---|---|---|---|
-| 사레레 `lateral_raise` | 어깨 외전각(hip-sho-elbow) | 외전각 > 80° | `asymmetry`(좌우 차 >20°) + `arms_too_high`(손목>어깨) |
-| 숄더프레스 `shoulder_press` | 팔꿈치각 | 팔꿈치각 > 160° | `asymmetry` |
+| 사레레 `lateralraise` | 어깨 외전각(hip-sho-elbow) | 외전각 > 80° | `asymmetry`(좌우 차 >20°) + `arms_too_high`(손목>어깨) |
+| 숄더프레스 `shoulderpress` | 팔꿈치각 | 팔꿈치각 > 160° | `asymmetry` |
 | 풀업 `pullup` | 팔꿈치각 | 팔꿈치각 < 90° | `asymmetry` |
 | 싯업 `situp` | 엉덩이각(sho-hip-knee) | 엉덩이각 < 90° | 없음(횟수+안내만) |
 
