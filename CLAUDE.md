@@ -572,6 +572,16 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - **한계**: 정규화 좌표 기반이라 이미지 종횡비 영향 있음(세로 폰 사진 기준 튜닝). 0.5는 측정 2점(약한 0.27 / 명확 1.0) 사이로 잡은 **잠정값** — 라벨 데이터로 재튜닝 권장.
 - 검증: `test_dataset.py` 11/11 PASS, `left_knee_forward` 이미지의 **허위 trunk_lean 제거** 확인.
 
+### 14주차 knee_forward 방향 무관화 (좌/우 측면 모두 동작)
+
+`knee_forward`(무릎이 발끝을 넘음) 검사는 `knee.x - ankle.x > MARGIN` 처럼 **부호 있는 x 비교**라 "사람이 화면에서 +x(오른쪽)를 향한다"고 암묵 가정했다. 반대편 측면에서 찍어 사람이 화면 왼쪽을 향하면 부호가 뒤집혀 **결함을 못 잡았다**(좌/우 측면 비대칭). 데이터셋 촬영 시 방향을 통제해야 하는 footgun.
+
+→ **무릎-엉덩이로 '앞' 방향을 추정**해 정규화: `sign(knee.x - hip.x)` 를 곱한다. 스쿼트·런지의 굽힌(DOWN) 자세에선 무릎이 엉덩이보다 확실히 전방이므로 이 부호가 곧 바라보는 방향이고, knee_forward 검사는 DOWN 게이팅이라 항상 그 전제가 성립한다. 헬퍼 `_forward_sign(hip, knee, eps=0.03)` (거의 수직=기립/모호면 0 → 판정 스킵). `judge_squat_pose`(좌·우 무릎) + `LungeAnalyzer._check_form`(앞다리) 동일 적용.
+
+- **첫 시도(발끝 toe 방향)는 폐기**: `foot_index.x - ankle.x` 로 방향을 잡으려 했으나, 발이 카메라쪽으로 조금만 틀어져도 수평 투영이 ~0 이 돼(실측 0.0~0.016) 실패. 엉덩이·무릎은 고-visibility 라 발 랜드마크(노이즈)보다 안정적.
+- 검증: `test_dataset.py` 11/11 PASS(회귀 0). **거울상(좌우 반전) 불변성** — `left_knee_forward` 원본·반전 둘 다 knee_forward 검출 확인.
+- 효과: 카메라를 사람 좌/우 어느 쪽에 두든 동일 동작 → **촬영 시 방향 통제 불필요**(실사용에서도 강건). trunk_lean·rep·asymmetry 는 이미 절댓값/각도 기반이라 원래 방향 무관.
+
 ### 운동 종목 확장: 사레레 / 숄더프레스 / 풀업 / 싯업
 
 기존 3종(squat/pushup/lunge)에 상체·코어 4종 추가 → `EXERCISE_REGISTRY` 7종. Strategy+Registry 구조라 분석기 클래스 + 등록 + 메시지만 추가하면 rep 카운팅·세션 관리가 자동 동작.

@@ -119,6 +119,23 @@ def calculate_angle(a, b, c):
 
 
 # ──────────────────────────────────────────────────────────────
+# 정면(facing) 방향 추정 — knee_forward 검사를 좌/우 측면·바라보는 방향에 무관하게
+# ──────────────────────────────────────────────────────────────
+def _forward_sign(hip, knee, eps=0.03):
+    """무릎이 엉덩이보다 앞(정면)으로 나간 부호(+1/-1)로 '바라보는 방향'을 추정한다.
+
+    스쿼트·런지의 굽힌(DOWN) 자세에서 무릎은 엉덩이보다 확실히 전방에 위치하므로
+    knee.x - hip.x 부호가 곧 정면 방향이다. 이 부호를 곱해 knee_forward 를 판정하면
+    화면에서 왼쪽을 보든 오른쪽을 보든(좌/우 측면 무관) 동일하게 동작한다.
+    엉덩이/무릎은 고-visibility 라 발 랜드마크보다 안정적이다. 거의 수직(기립/모호)이면 0.
+    """
+    dx = knee.x - hip.x
+    if abs(dx) < eps:
+        return 0.0
+    return 1.0 if dx > 0 else -1.0
+
+
+# ──────────────────────────────────────────────────────────────
 # 스쿼트 자세 판별
 # ──────────────────────────────────────────────────────────────
 def judge_squat_pose(landmarks, angle_lk, angle_rk):
@@ -133,9 +150,12 @@ def judge_squat_pose(landmarks, angle_lk, angle_rk):
     ls = landmarks[LEFT_SHOULDER]
     rs = landmarks[RIGHT_SHOULDER]
 
-    if lk.x - la.x > KNEE_FORWARD_MARGIN:
+    # 무릎-엉덩이로 '앞' 방향을 잡아 판정 → 좌/우 측면·바라보는 방향에 무관
+    l_sign = _forward_sign(lh, lk)
+    r_sign = _forward_sign(rh, rk)
+    if l_sign != 0 and l_sign * (lk.x - la.x) > KNEE_FORWARD_MARGIN:
         issues.append({"key": "left_knee_forward", "label": "L Knee Forward"})
-    if rk.x - ra.x > KNEE_FORWARD_MARGIN:
+    if r_sign != 0 and r_sign * (rk.x - ra.x) > KNEE_FORWARD_MARGIN:
         issues.append({"key": "right_knee_forward", "label": "R Knee Forward"})
 
     avg_sho_x = (ls.x + rs.x) / 2
@@ -875,14 +895,15 @@ class LungeAnalyzer:
 
     def _check_form(self, landmarks, front_leg: str) -> list[str]:
         if front_leg == "left":
-            knee, ankle = landmarks[LEFT_KNEE], landmarks[LEFT_ANKLE]
+            hip, knee, ankle = landmarks[LEFT_HIP], landmarks[LEFT_KNEE], landmarks[LEFT_ANKLE]
         else:
-            knee, ankle = landmarks[RIGHT_KNEE], landmarks[RIGHT_ANKLE]
+            hip, knee, ankle = landmarks[RIGHT_HIP], landmarks[RIGHT_KNEE], landmarks[RIGHT_ANKLE]
 
         issues: list[str] = []
 
-        # 앞다리 무릎이 발목보다 X 전방 (squat의 knee_forward와 동일 규약)
-        if knee.x - ankle.x > LUNGE_KNEE_FORWARD_MARGIN:
+        # 앞다리 무릎이 발목보다 전방 (무릎-엉덩이로 앞 방향 — 좌/우 측면·바라보는 방향 무관)
+        sign = _forward_sign(hip, knee)
+        if sign != 0 and sign * (knee.x - ankle.x) > LUNGE_KNEE_FORWARD_MARGIN:
             issues.append("front_knee_forward")
 
         # 상체 숙임: 어깨가 엉덩이보다 앞으로(수평) 나간 정도 (squat 과 동일 규약)
