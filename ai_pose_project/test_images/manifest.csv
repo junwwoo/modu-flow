@@ -10,3 +10,15 @@ pushup/good_down/m1_side_01.jpg,pushup,good_down,good,,DOWN,side,m1,정상 DOWN 
 pushup/hip_sag/m1_side_01.jpg,pushup,hip_sag,bad,pushup.hip_sag,,side,m1,엉덩이 처짐
 pushup/hip_pike/m1_side_01.jpg,pushup,hip_pike,bad,pushup.hip_pike,,side,m1,엉덩이 솟음
 pushup/camera_angle/m1_front_01.jpg,pushup,camera_angle,bad,pushup.camera_angle,,front,m1,정면 촬영 부적합 케이스
+squat/good_up/m1_side_01.jpg,squat,good_up,good,,UP,side,m1,
+squat/good_up/m1_side_02.jpg,squat,good_up,good,,UP,side,m1,
+squat/good_up/m1_side_03.jpg,squat,good_up,good,,UP,side,m1,
+squat/good_up/m3_side_01.jpg,squat,good_up,good,,UP,side,m3,
+squat/good_up/m3_side_02.jpg,squat,good_up,good,,UP,side,m3,
+squat/good_up/m3_side_03.jpg,squat,good_up,good,,UP,side,m3,
+squat/good_down/m1_side_01.jpg,squat,good_down,good,,DOWN,side,m1,deep squat ~50deg
+squat/good_down/m1_side_02.jpg,squat,good_down,good,,DOWN,side,m1,deep squat ~50deg
+squat/good_down/m1_side_03.jpg,squat,good_down,good,,DOWN,side,m1,deep squat ~50deg
+squat/trunk_lean/m3_side_01.jpg,squat,trunk_lean,bad,squat.trunk_lean,DOWN,side,m3,deep squat with strong forward lean (~1.3)
+squat/trunk_lean/m3_side_02.jpg,squat,trunk_lean,bad,squat.trunk_lean,DOWN,side,m3,deep squat with strong forward lean (~1.3)
+squat/trunk_lean/m3_side_03.jpg,squat,trunk_lean,bad,squat.trunk_lean,DOWN,side,m3,deep squat with strong forward lean (~1.3)

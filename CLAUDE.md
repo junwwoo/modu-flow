@@ -582,6 +582,16 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - 검증: `test_dataset.py` 11/11 PASS(회귀 0). **거울상(좌우 반전) 불변성** — `left_knee_forward` 원본·반전 둘 다 knee_forward 검출 확인.
 - 효과: 카메라를 사람 좌/우 어느 쪽에 두든 동일 동작 → **촬영 시 방향 통제 불필요**(실사용에서도 강건). trunk_lean·rep·asymmetry 는 이미 절댓값/각도 기반이라 원래 방향 무관.
 
+### 14주차 깊은 스쿼트 폼 기준 튜닝 (첫 실촬영 데이터)
+
+팀 분담 촬영의 첫 영상(m1·m3 스쿼트 측면)으로 데이터셋을 채우다, **깊은 스쿼트(무릎 ~50°)에서 분석기가 정상 자세를 knee_forward + trunk_lean 으로 오탐**하는 걸 발견했다. 실측 결과 knee_forward 는 무릎이 발목보다 0.13~0.17 앞(기준 0.05의 3배) — 그런데 기존 knee_forward *결함* 예시(87°)는 0.09~0.10 으로 **더 적어**, 절대 거리로는 둘을 구분할 수 없었다(깊이가 교란 변수).
+
+- **knee_forward 깊이 게이팅**: `KNEE_FORWARD_MIN_ANGLE(70)` 도입 — 무릎 평균 각도가 70° 이상(충분히 깊지 않은)일 때만 검사. 깊은 스쿼트(50°)는 무릎 과전방이 생체역학상 정상이라 스킵, 결함 예시(87°)는 그대로 검출. "무릎이 발끝 넘김" 규칙은 깊은 스쿼트엔 거의 항상 걸리는 논쟁적 큐라 깊이로 게이팅하는 게 타당.
+- **trunk_lean 완화**: `TRUNK_LEAN_RATIO 0.5 → 0.8` — 깊은 스쿼트의 자연스러운 약한 숙임(m1 0.6~0.7) 허용, 명확한 숙임(1.0+)은 유지.
+- **m3 재분류**: m3 의 스쿼트는 lean 1.2~1.3 으로 명확한 숙임 기준(~1.0)보다 커서, good_down 이 아니라 **`squat/trunk_lean/` 결함 예시로 재분류**(그동안 0장이던 squat trunk_lean 실데이터 3장 확보). trunk_lean 을 m3 까지 통과시키려면 임계값을 1.33+ 로 올려 검출을 무력화해야 하므로 채택 안 함.
+- 데이터: squat good_up 8 / good_down 3(m1) / trunk_lean 3(m3) / left_knee_forward 1. `test_dataset.py` **23/23 PASS**.
+- **한계**: 영상 2개(소표본) 기반이라 `70°`·`0.8` 은 잠정값. 데이터가 늘면 재조정. 발끝 방향 cue 는 발이 카메라쪽으로 살짝 틀어지면 수평 투영이 ~0 이 돼 폐기(앞 절 참고), 깊이·무릎-엉덩이 기반이 안정적.
+
 ### 운동 종목 확장: 사레레 / 숄더프레스 / 풀업 / 싯업
 
 기존 3종(squat/pushup/lunge)에 상체·코어 4종 추가 → `EXERCISE_REGISTRY` 7종. Strategy+Registry 구조라 분석기 클래스 + 등록 + 메시지만 추가하면 rep 카운팅·세션 관리가 자동 동작.

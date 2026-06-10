@@ -143,15 +143,15 @@ test_images/
   ```
   저장 시 분석기 예측을 `✓/✗`로 함께 출력(임계값 튜닝 힌트, 라벨 판정용 아님). 세로 폰 영상은 `--rotate 90`.
 
-## 진행 현황 (2026-06-06)
+## 진행 현황 (2026-06-10)
 
 | 운동 | 라벨 | 보유 표본 | 목표 |
 |---|---|---|---|
-| squat | good_up | 2 | 4 |
-| squat | good_down | 0 | 4 |
+| squat | good_up | 8 | 4 |
+| squat | good_down | 3 | 4 |
 | squat | left_knee_forward | 1 | 4 |
 | squat | right_knee_forward | 0 | 4 |
-| squat | trunk_lean | 0 | 4 |
+| squat | trunk_lean | 3 | 4 |
 | squat | knee_asymmetry | 0 | 4 |
 | pushup | good_up | 1 | 4 |
 | pushup | good_down | 1 | 4 |

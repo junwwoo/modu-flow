@@ -86,11 +86,14 @@ MIN_LANDMARK_VISIBILITY = 0.5
 # 스쿼트 폼 검사 임계값 (stage 임계값은 SquatAnalyzer 클래스 속성으로 이전)
 # ──────────────────────────────────────────────────────────────
 KNEE_FORWARD_MARGIN  = 0.05
+# 깊은 스쿼트(무릎 각도 작음)는 무릎이 발끝을 넘는 게 생체역학상 정상 → knee_forward 는
+# 무릎 평균 각도가 이 값 이상(충분히 깊지 않은 구간)일 때만 검사. (14주차, m1/m3 ~50° 실데이터, 소표본)
+KNEE_FORWARD_MIN_ANGLE = 70
 # 상체 숙임: 어깨-엉덩이의 수평 오프셋 / 수직 거리 (≈ 몸통이 수직에서 기운 tan값).
 # 사람 크기에 불변(둘 다 함께 스케일)하며, 측면에서 앞으로 숙일수록 커진다.
 # (이전 0.10은 "세로 간격"이라 upright 일수록 커지는 역방향 버그였음 — 모든 스쿼트가 오탐)
 # 정규화 좌표 기반이라 이미지 종횡비 영향은 있음(세로 폰 사진 기준 튜닝). 데이터로 재튜닝 권장.
-TRUNK_LEAN_RATIO     = 0.5
+TRUNK_LEAN_RATIO     = 0.8   # 14주차: 0.5→0.8 (깊은 스쿼트의 약한 숙임 허용; 명확한 숙임 1.0+ 은 유지)
 
 FEEDBACK_DISPLAY_SEC = 3.0
 
@@ -150,13 +153,15 @@ def judge_squat_pose(landmarks, angle_lk, angle_rk):
     ls = landmarks[LEFT_SHOULDER]
     rs = landmarks[RIGHT_SHOULDER]
 
-    # 무릎-엉덩이로 '앞' 방향을 잡아 판정 → 좌/우 측면·바라보는 방향에 무관
-    l_sign = _forward_sign(lh, lk)
-    r_sign = _forward_sign(rh, rk)
-    if l_sign != 0 and l_sign * (lk.x - la.x) > KNEE_FORWARD_MARGIN:
-        issues.append({"key": "left_knee_forward", "label": "L Knee Forward"})
-    if r_sign != 0 and r_sign * (rk.x - ra.x) > KNEE_FORWARD_MARGIN:
-        issues.append({"key": "right_knee_forward", "label": "R Knee Forward"})
+    # 무릎-엉덩이로 '앞' 방향을 잡아 판정 → 좌/우 측면·바라보는 방향에 무관.
+    # 깊은 스쿼트(무릎 평균 각도 < KNEE_FORWARD_MIN_ANGLE)는 무릎 과전방이 정상이라 스킵.
+    if (angle_lk + angle_rk) / 2 >= KNEE_FORWARD_MIN_ANGLE:
+        l_sign = _forward_sign(lh, lk)
+        r_sign = _forward_sign(rh, rk)
+        if l_sign != 0 and l_sign * (lk.x - la.x) > KNEE_FORWARD_MARGIN:
+            issues.append({"key": "left_knee_forward", "label": "L Knee Forward"})
+        if r_sign != 0 and r_sign * (rk.x - ra.x) > KNEE_FORWARD_MARGIN:
+            issues.append({"key": "right_knee_forward", "label": "R Knee Forward"})
 
     avg_sho_x = (ls.x + rs.x) / 2
     avg_hip_x = (lh.x + rh.x) / 2
