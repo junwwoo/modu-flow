@@ -143,33 +143,33 @@ test_images/
   ```
   저장 시 분석기 예측을 `✓/✗`로 함께 출력(임계값 튜닝 힌트, 라벨 판정용 아님). 세로 폰 영상은 `--rotate 90`.
 
-## 진행 현황 (2026-06-10, m1 전종목 추가 후 — test_dataset 69/69 PASS)
+## 진행 현황 (2026-06-10, m1·m2 추가 후 — test_dataset 119/119 PASS)
 
 | 운동 | 라벨 | 보유 표본 | 목표 |
 |---|---|---|---|
-| squat | good_up | 8 | 4 |
-| squat | good_down | 3 | 4 |
+| squat | good_up | 11 | 4 |
+| squat | good_down | 9 | 4 |
 | squat | left_knee_forward | 1 | 4 |
 | squat | right_knee_forward | 0 | 4 |
 | squat | trunk_lean | 6 | 4 |
-| squat | knee_asymmetry | 3 | 4 |
-| pushup | good_up | 4 | 4 |
-| pushup | good_down | 4 | 4 |
+| squat | knee_asymmetry | 6 | 4 |
+| pushup | good_up | 6 | 4 |
+| pushup | good_down | 7 | 4 |
 | pushup | hip_sag | 1 | 4 |
-| pushup | hip_pike | 2 | 4 |
+| pushup | hip_pike | 5 | 4 |
 | pushup | camera_angle | 1 | 1 |
-| lunge | good_up | 3 | 4 |
-| lunge | good_down | 3 | 4 |
+| lunge | good_up | 6 | 4 |
+| lunge | good_down | 6 | 4 |
 | lunge | front_knee_forward | 3 | 4 |
-| lunge | trunk_lean | 3 | 4 |
+| lunge | trunk_lean | 6 | 4 |
 | lunge | unknown_front_leg | 0 | 2 |
-| lateralraise | good_up | 3 | 4 |
-| lateralraise | good_down | 3 | 4 |
-| lateralraise | asymmetry | 3 | 4 |
-| lateralraise | arms_too_high | 3 | 4 |
-| shoulderpress | good_up | 3 | 4 |
-| shoulderpress | good_down | 3 | 4 |
-| shoulderpress | asymmetry | 3 | 4 |
+| lateralraise | good_up | 6 | 4 |
+| lateralraise | good_down | 6 | 4 |
+| lateralraise | asymmetry | 6 | 4 |
+| lateralraise | arms_too_high | 6 | 4 |
+| shoulderpress | good_up | 6 | 4 |
+| shoulderpress | good_down | 6 | 4 |
+| shoulderpress | asymmetry | 6 | 4 |
 | pullup | good_up | 0 | 4 |
 | pullup | good_down | 0 | 4 |
 | pullup | asymmetry | 0 | 4 |
@@ -177,5 +177,7 @@ test_images/
 | situp | good_down | 0 | 4 |
 | _generic | not_detected | 3 | 3 |
 
-> m1(박준우) 전종목 1차 촬영 반영. 임계값은 m1 단일 인원 기준이라 잠정 — m2~m4 추가 시 재확인.
-> **재촬영 대기**: `squat/knee_forward`(rock-bottom이라 결함 분리 불가 — 중간 깊이 필요), `pushup/hip_sag`(처짐이 약함 — 더 확실히). `pullup`·`situp`·`right_knee_forward`·`lunge/unknown_front_leg` 는 표본 0.
+> m1(박준우)·m2(이경민) 2인 반영. 2인 데이터로 trunk_lean 임계값을 일반화(squat 1.5 / lunge 1.1)했으나 여전히 잠정 — m3·m4 추가 시 재확인.
+> **재촬영 대기**: `squat/knee_forward`(rock-bottom이라 결함 분리 불가 — 중간 깊이 필요), `pushup/hip_sag`(처짐이 약함 — 더 확실히).
+> **미사용**: `lunge/front_knee_forward` 는 사람 간 good/fault 가 겹쳐(knee-past-ankle 한계) m1 만 검출 — 신뢰 낮음.
+> **표본 0**: `pullup`·`situp`(영상 없음)·`squat/right_knee_forward`·`lunge/unknown_front_leg`.

@@ -602,6 +602,15 @@ m1(박준우) 영상 12개(squat/pushup/lunge/lateralraise/shoulderpress)로 데
 - **촬영 이슈로 재촬영 필요(분석기 아님)**: `squat knee_forward`(rock-bottom 35°라 무릎 과전방이 정상 → 결함 분리 불가), `pushup hip_sag`(처짐 0.021 이 기존 정상 good_down 0.025 보다 약함 → 임계값 못 낮춤). hip_pike 도 솟음 약한 경계 프레임 1장은 제외.
 - **한계**: 단일 인원(m1) 데이터라 임계값은 여전히 잠정. m2~m4 추가 시 재확인 권장.
 
+### 14주차 m2 데이터 — 임계값 일반화 (m1 과적합 교정)
+
+m2(이경민) 12개 영상을 추가하며, m1 기준으로 잡았던 임계값 일부가 **m1 한 명에 과적합**이었음이 드러나 일반화했다. 검증 **119/119 PASS**(2인).
+
+- **trunk_lean 임계값이 사람마다 크게 다름**: 정상 깊은 스쿼트 lean 이 m1=0.65 / m2=1.09~1.20 / m3=1.25 — **3명 중 2명이 1.0+**. lean ~1.0~1.2 는 깊은 스쿼트의 정상 역학으로 판단, `TRUNK_LEAN_RATIO 0.8 → 1.5` 상향(의도적 숙임은 m1·m2 모두 1.9~4.5 라 분리 명확). **m3 는 good_down 으로 복귀**(13주차의 trunk_lean 재분류 번복 — 1.25 는 정상 범위). lunge 도 동일 원리로 `LUNGE_TRUNK_LEAN_RATIO 0.5 → 1.1`(정상 0.27~0.85 / 의도적 1.4~2.0).
+- **lunge `front_knee_forward` 의 근본 한계 확인**: 앞무릎-발목 전방거리가 **사람 간 good/fault 가 겹침** — m1 good(0.09) = m2 fault(0.09). 깊이+체형 교란으로 knee-past-ankle 은 2D 에서 신뢰성 있는 판별자가 못 됨(squat knee_forward 와 동일 결론). margin 0.13(m1 기준) 유지 결정 → m2 의 약한 fault(0.09)는 미검출(미사용). 향후 별도 신호 필요.
+- **촬영 이슈 재확인(분석기 아님)**: m2 도 `squat knee_forward`(rock-bottom 42°), `pushup hip_sag`(처짐 약함)는 m1 과 같은 사유로 미사용 → 재촬영 대상.
+- **교훈**: trunk_lean 처럼 개인차가 큰 지표는 1인 데이터로 임계값을 잡으면 위험. 다인 데이터로만 일반화 가능. 현재 2인이라 여전히 잠정 — m4 까지 모이면 재확인.
+
 ### 운동 종목 확장: 사레레 / 숄더프레스 / 풀업 / 싯업
 
 기존 3종(squat/pushup/lunge)에 상체·코어 4종 추가 → `EXERCISE_REGISTRY` 7종. Strategy+Registry 구조라 분석기 클래스 + 등록 + 메시지만 추가하면 rep 카운팅·세션 관리가 자동 동작.
