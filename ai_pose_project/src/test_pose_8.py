@@ -680,7 +680,9 @@ class SquatAnalyzer:
 # ──────────────────────────────────────────────────────────────
 PUSHUP_HIP_DEVIATION_MARGIN = 0.035  # 어깨-발목 중간 Y 대비 엉덩이 Y 편차 임계
 PUSHUP_ELBOW_FLARE_RATIO    = 0.5    # 어깨 폭 대비 어깨-팔꿈치 X 거리 비율 (정면일 때만 사용)
-PUSHUP_CAMERA_FRONTAL_RATIO = 0.4    # 어깨 X 거리 / 어깨-엉덩이 Y 거리 임계
+PUSHUP_CAMERA_FRONTAL_SHOULDER_X = 0.08  # 14주차: 정면 촬영 감지 — 어깨 X 폭 절대값 임계
+                                         # (측면 0.008~0.034 / 정면 ~0.144). 이전 shoulderX/torsoY
+                                         # 비율은 푸시업 수평 몸통에서 torsoY≈0 이라 폭발 → 오탐
 
 
 class PushupAnalyzer:
@@ -756,13 +758,12 @@ class PushupAnalyzer:
         avg_hip_y   = (lh.y + rh.y) / 2
         avg_ankle_y = (la.y + ra.y) / 2
         shoulder_x_dist = abs(ls.x - rs.x)
-        torso_y_dist    = abs(avg_hip_y - avg_sho_y)
 
         # 카메라 각도: 정면 촬영이 의심되면 다른 폼 검사는 부정확하므로 스킵하고
-        # camera_angle 안내만 반환 (사용자에게 측면 재촬영을 우선 요청).
-        if torso_y_dist > 1e-6:
-            if shoulder_x_dist / torso_y_dist > PUSHUP_CAMERA_FRONTAL_RATIO:
-                return ["camera_angle"]
+        # camera_angle 안내만 반환. 측면은 두 어깨가 앞뒤로 겹쳐 X 폭이 작고(~0.01~0.03),
+        # 정면은 어깨가 좌우로 벌어져 X 폭이 큼(~0.14) → 절대 X 폭으로 판정.
+        if shoulder_x_dist > PUSHUP_CAMERA_FRONTAL_SHOULDER_X:
+            return ["camera_angle"]
 
         issues = []
 
@@ -785,7 +786,8 @@ class PushupAnalyzer:
 # ──────────────────────────────────────────────────────────────
 LUNGE_FRONT_LEG_Z_MARGIN  = 0.05  # |Δz| 이하면 Y로 폴백
 LUNGE_FRONT_LEG_Y_MARGIN  = 0.05  # |Δy(knee)| 이하면 히스테리시스로 폴백
-LUNGE_KNEE_FORWARD_MARGIN = 0.05  # 앞다리 무릎 X가 발목보다 전방 (squat과 동일 규약)
+LUNGE_KNEE_FORWARD_MARGIN = 0.13  # 14주차: 0.05→0.13. 정상 런지도 앞무릎이 발목보다 약간 앞(0.09)이라
+                                  # 0.05 면 오탐 → 실측 정상 0.09 / 결함 0.18 사이로 상향(m1 실데이터, 소표본)
 LUNGE_TRUNK_LEAN_RATIO    = 0.5   # 상체 숙임: 수평/수직 오프셋 비율 (squat과 동일 규약, lunge 데이터 미검증)
 
 
@@ -928,7 +930,7 @@ class LungeAnalyzer:
 # 폼 검사는 보수적: 2D 단일 카메라로 신뢰성 있게 잡히는 것(좌우 비대칭·과도 거상)만 emit.
 # rep 카운팅은 RepCounter(적응형)가 primary_angle_keys 로 처리하므로 데이터 없이도 횟수는 정확.
 # ──────────────────────────────────────────────────────────────
-LATERAL_RAISE_ASYMMETRY_DEG    = 20    # 좌우 어깨 외전각 차이 임계
+LATERAL_RAISE_ASYMMETRY_DEG    = 10    # 14주차: 20→10 (실측 정상 6° / 비대칭 15° 사이). 좌우 어깨 외전각 차이 임계
 LATERAL_RAISE_OVERRAISE_MARGIN = 0.03  # 손목이 어깨보다 이만큼(정규화 y) 위로 가면 과도 거상
 SHOULDER_PRESS_ASYMMETRY_DEG   = 20    # 좌우 팔꿈치각 차이 임계
 PULLUP_ASYMMETRY_DEG           = 20    # 좌우 팔꿈치각 차이 임계
