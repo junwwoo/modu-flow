@@ -611,6 +611,8 @@ m2(이경민) 12개 영상을 추가하며, m1 기준으로 잡았던 임계값 
 - **촬영 이슈 재확인(분석기 아님)**: m2 도 `squat knee_forward`(rock-bottom 42°), `pushup hip_sag`(처짐 약함)는 m1 과 같은 사유로 미사용 → 재촬영 대상.
 - **교훈**: trunk_lean 처럼 개인차가 큰 지표는 1인 데이터로 임계값을 잡으면 위험. 다인 데이터로만 일반화 가능. 현재 2인이라 여전히 잠정 — m4 까지 모이면 재확인.
 
+**m3(임용완) 추가 (14개 영상) — 데이터 160/160 PASS, 임계값 변경 없음.** m3 의 결함 시도가 전반적으로 **약해** 4개는 미사용·재촬영 대상: `squat knee_forward`(rock-bottom 44°), `squat knee_asymmetry`(좌우 무릎각 차 5~8° — 임계 15 미달, 사실상 대칭), `pushup hip_sag`(처짐 약함), `lateralraise asymmetry`(좌우 차 3~10° — 임계 10 미달). 측정으로 "촬영 약함"임을 확인했고, 임계값을 낮추면 정상 변동(예: lateralraise good 좌우차 ~6°)을 오탐하므로 낮추지 않음. **m3 squat good 데이터가 trunk_lean 1.5 임계값을 3인 기준으로 재확인**(회귀 0) — 임계값 안정화. 데이터셋 현재 3인 160장(squat 36 / pushup 29 / lunge 33 / lateralraise 32 / shoulderpress 27 / generic 3).
+
 ### 운동 종목 확장: 사레레 / 숄더프레스 / 풀업 / 싯업
 
 기존 3종(squat/pushup/lunge)에 상체·코어 4종 추가 → `EXERCISE_REGISTRY` 7종. Strategy+Registry 구조라 분석기 클래스 + 등록 + 메시지만 추가하면 rep 카운팅·세션 관리가 자동 동작.
