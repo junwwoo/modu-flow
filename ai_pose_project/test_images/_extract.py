@@ -61,21 +61,34 @@ ACTIVE_EXTREME = {
 # 폼 검사가 DOWN 단계 게이팅인 운동 (manifest expected_stage 채움용)
 DOWN_GATED = {"squat", "pushup", "lunge"}
 
+# good_up(= 운동의 '올라간/편' 자세)이 primary 각의 high인지 low인지.
+#   active 와 별개다: 프레스/레이즈는 올린 게 active(=good_up=high)이지만,
+#   풀업/싯업은 끌어올림/일어남(굽힘=작은 각)이 '위(good_up)'이자 active.
+#   스쿼트/런지/푸시업은 서거나 편 상태(큰 각)가 good_up.
+GOOD_UP_EXTREME = {
+    "squat": "high", "pushup": "high", "lunge": "high",
+    "lateralraise": "high", "shoulderpress": "high",
+    "pullup": "low", "situp": "low",
+}
+
 
 def derive_expected(exercise: str, label: str) -> dict:
     """라벨 → (expected_posture, expected_issue_key, expected_stage, pick) 추론.
 
-    pick = "low"/"high": 어느 극점 프레임을 뽑을지. good_up 은 active 의 반대 극점.
+    pick = "low"/"high": 어느 극점 프레임을 뽑을지.
+      good_up  → GOOD_UP_EXTREME (운동의 '위' 자세), good_down → 그 반대.
+      fault    → ACTIVE_EXTREME (폼 검사가 의미있는 작용 자세).
     """
-    active = ACTIVE_EXTREME.get(exercise, "low")
-    opposite = "high" if active == "low" else "low"
+    up = GOOD_UP_EXTREME.get(exercise, "high")
+    down = "low" if up == "high" else "high"
     if label == "good_up":
-        return {"posture": "good", "issue_key": "", "stage": "UP", "pick": opposite}
+        return {"posture": "good", "issue_key": "", "stage": "UP", "pick": up}
     if label == "good_down":
-        return {"posture": "good", "issue_key": "", "stage": "DOWN", "pick": active}
+        return {"posture": "good", "issue_key": "", "stage": "DOWN", "pick": down}
     # fault 라벨
     stage = "DOWN" if exercise in DOWN_GATED else ""
-    return {"posture": "bad", "issue_key": f"{exercise}.{label}", "stage": stage, "pick": active}
+    return {"posture": "bad", "issue_key": f"{exercise}.{label}",
+            "stage": stage, "pick": ACTIVE_EXTREME.get(exercise, "low")}
 
 
 def rotate_frame(frame, deg: int):

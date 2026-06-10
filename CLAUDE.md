@@ -592,6 +592,16 @@ gcloud run services logs read moduflow-ai --region=asia-northeast3 --project=mod
 - 데이터: squat good_up 8 / good_down 3(m1) / trunk_lean 3(m3) / left_knee_forward 1. `test_dataset.py` **23/23 PASS**.
 - **한계**: 영상 2개(소표본) 기반이라 `70°`·`0.8` 은 잠정값. 데이터가 늘면 재조정. 발끝 방향 cue 는 발이 카메라쪽으로 살짝 틀어지면 수평 투영이 ~0 이 돼 폐기(앞 절 참고), 깊이·무릎-엉덩이 기반이 안정적.
 
+### 14주차 m1 전종목 데이터 + 분석기 3건 튜닝 (실촬영 기반)
+
+m1(박준우) 영상 12개(squat/pushup/lunge/lateralraise/shoulderpress)로 데이터셋을 채우며 첫 다종목 실데이터를 검증, 분석기 오탐 3건을 실측 기반으로 수정했다. 검증 **69/69 PASS**.
+
+- **pushup `camera_angle`: 비율 → 절대 어깨너비**. 기존 `shoulderX/torsoY > 0.4` 는 푸시업의 수평 몸통에서 `torsoY`(어깨-엉덩이 세로거리)가 0.006까지 작아져 비율이 폭발(6.05) → 측면 푸시업을 정면으로 오탐(다른 검사까지 가림). **`shoulderX > PUSHUP_CAMERA_FRONTAL_SHOULDER_X(0.08)`** 로 교체(측면 0.008~0.034 / 정면 ~0.144 로 절대값이 깔끔히 분리). `PUSHUP_CAMERA_FRONTAL_RATIO` 제거.
+- **lateralraise `asymmetry`: 20° → 10°**. 실측 정상 좌우차 6° / 비대칭 15° 사이로 하향(`LATERAL_RAISE_ASYMMETRY_DEG`). shoulderpress(20°)는 그대로.
+- **lunge `front_knee_forward` margin: 0.05 → 0.13** (`LUNGE_KNEE_FORWARD_MARGIN`). 정상 런지도 앞무릎이 발목보다 약간 앞(0.09)이라 0.05면 good 오탐 → 정상 0.09 / 결함 0.18 사이로 상향. (squat 처럼 깊이 교란이 있으나 앞다리 식별이 맞으면 magnitude로 분리됨)
+- **촬영 이슈로 재촬영 필요(분석기 아님)**: `squat knee_forward`(rock-bottom 35°라 무릎 과전방이 정상 → 결함 분리 불가), `pushup hip_sag`(처짐 0.021 이 기존 정상 good_down 0.025 보다 약함 → 임계값 못 낮춤). hip_pike 도 솟음 약한 경계 프레임 1장은 제외.
+- **한계**: 단일 인원(m1) 데이터라 임계값은 여전히 잠정. m2~m4 추가 시 재확인 권장.
+
 ### 운동 종목 확장: 사레레 / 숄더프레스 / 풀업 / 싯업
 
 기존 3종(squat/pushup/lunge)에 상체·코어 4종 추가 → `EXERCISE_REGISTRY` 7종. Strategy+Registry 구조라 분석기 클래스 + 등록 + 메시지만 추가하면 rep 카운팅·세션 관리가 자동 동작.
